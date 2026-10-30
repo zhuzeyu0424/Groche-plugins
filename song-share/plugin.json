@@ -1,9 +1,9 @@
 {
   "id": "roche-song-share",
   "name": "分享歌曲",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "双方互发歌曲卡片；直接搜索 Apple 公开曲库，支持 QQ / 网易云分享链接。无需 Supabase。",
-  "entry": "roche-song-share.js?v=0.1.1",
+  "entry": "roche-song-share.js?v=0.1.2",
   "permissions": [
     "conversation:read",
     "memory:read",
