@@ -1,9 +1,9 @@
 {
   "id": "roche-song-share",
   "name": "分享歌曲",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "搜索、播放与切歌，双方互发歌曲；支持连接私人网易云音乐服务。",
-  "entry": "roche-song-share.js?v=0.2.0",
+  "entry": "roche-song-share.js?v=0.2.1",
   "permissions": [
     "conversation:read",
     "memory:read",
