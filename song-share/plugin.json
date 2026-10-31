@@ -1,9 +1,9 @@
 {
   "id": "roche-song-share",
   "name": "分享歌曲",
-  "version": "0.2.1",
-  "description": "搜索、播放与切歌，双方互发歌曲；支持连接私人网易云音乐服务。",
-  "entry": "roche-song-share.js?v=0.2.1",
+  "version": "0.3.0",
+  "description": "Apple Music 搜索与分享，专辑封面、发现歌曲与卡片配色。",
+  "entry": "roche-song-share.js?v=0.3.0",
   "permissions": [
     "conversation:read",
     "memory:read",
