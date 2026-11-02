@@ -1,0 +1,18 @@
+{
+  "id": "roche-call",
+  "name": "通话",
+  "version": "0.1.0",
+  "description": "打字与语音通话，结束后保存文字记录。",
+  "entry": "plugin.js?v=0.1.0",
+  "permissions": [
+    "conversation:read",
+    "character:read",
+    "persona:read",
+    "memory:read",
+    "chat:write",
+    "ai:chat",
+    "voice:tts",
+    "storage",
+    "ui"
+  ]
+}
