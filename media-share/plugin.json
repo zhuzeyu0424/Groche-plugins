@@ -1,8 +1,15 @@
 {
   "id": "roche-media-share",
-  "name": "相册与拍摄",
-  "version": "0.1.1",
-  "description": "从相册分享照片、短视频，拍照并让角色读取视觉描述。",
-  "entry": "plugin.js?v=0.1.1",
-  "permissions": ["conversation:read", "chat:write", "ai:chat", "storage", "ui", "network"]
+  "name": "分享视频",
+  "version": "0.2.0",
+  "description": "分享短视频与视觉描述，按需播放并管理本机原片空间。",
+  "entry": "plugin.js?v=0.2.0",
+  "permissions": [
+    "conversation:read",
+    "chat:write",
+    "ai:chat",
+    "storage",
+    "ui",
+    "network"
+  ]
 }
