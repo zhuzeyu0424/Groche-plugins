@@ -1,7 +1,7 @@
 {
   "id": "roche-tapback",
   "name": "气泡贴表情",
-  "version": "0.5.3",
-  "description": "226 个表情，支持分类与搜索，修复手机搜索时面板关闭的问题。",
-  "entry": "roche-tapback.js?v=0.5.3"
+  "version": "0.5.4",
+  "description": "226 个表情，支持分类与搜索；角色每轮可读取近期消息上实际保存的双方表情，保留贴表情间隔。",
+  "entry": "roche-tapback.js?v=0.5.4"
 }
