@@ -1,9 +1,9 @@
 {
   "id": "roche-call",
   "name": "通话",
-  "version": "0.1.0",
-  "description": "打字与语音通话，结束后保存文字记录。",
-  "entry": "plugin.js?v=0.1.0",
+  "version": "0.2.0",
+  "description": "打字与语音通话、自动朗读、沉默接话及聊天记录保存。",
+  "entry": "plugin.js?v=0.2.0",
   "permissions": [
     "conversation:read",
     "character:read",
