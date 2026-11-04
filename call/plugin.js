@@ -1,4 +1,4 @@
-/* Roche voice chat 0.1.0. No embedded credentials, dependencies or automatic retries. */
+/* Roche voice chat 0.2.0. No embedded credentials, dependencies or automatic retries. */
 (function () {
   'use strict';
   if (!window.RochePlugin?.register) throw new Error('请通过 Roche 的插件管理安装本文件。');
@@ -34,7 +34,23 @@
     .notice{padding-top:8px;font-size:11px;color:#7a7a70;line-height:1.5}.hidden{display:none!important}.context{font-size:11px;color:#75776c;line-height:1.5}
     @media(prefers-color-scheme:dark){:host{color:#eee;color-scheme:dark}.app{background:#20221f}header,footer,.settings{background:#292c27;border-color:#42483e}.sub,.note,.empty,.context,.notice,.who{color:#b2b8aa}.empty b{color:#edf0e9}.round,.stop{background:#42483e;color:#eee}.bubble{background:#3e4739}.user .bubble,.send{background:#b7c8a5;color:#202b1c}textarea,select,input[type=text]{background:#20221f;color:#eee;border-color:#5b6354}.mic{background:#364932;color:#dcebd1;border-color:#66755a}.status,.play{color:#c0d5b2}.status.error{color:#f1b896}}
     @media(prefers-reduced-motion:no-preference){.msg{animation:appear .18s ease-out}@keyframes appear{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}}
+    :host{color:#f4f4f5;color-scheme:dark}.app{background:radial-gradient(ellipse at 50% 12%,#303034 0,#141416 48%,#09090b 100%)}
+    header,footer{background:transparent;border:0}header{padding-top:max(18px,env(safe-area-inset-top));}h1{font-size:16px}.sub,.note,.context,.notice,.who{color:#99999f}
+    .round,.stop{background:#2d2d31;color:#eee}.settings{background:#202023;border-color:#36363a;margin-top:0}.options{max-height:28dvh}
+    textarea,select,input[type=text]{background:#202023;color:#fff;border-color:#424247}textarea{height:48px;border-radius:24px}.send{background:#f4f4f5;color:#141416;border-radius:24px}
+    .identity{text-align:center;padding:14px 16px 8px;flex-shrink:0}.avatar{width:92px;height:92px;border-radius:50%;object-fit:cover;background:#303034;margin:auto;display:block}.identity h2{font-size:22px;margin:10px 0 6px}.phase{font-size:12px;color:#aaa;letter-spacing:.08em}
+    .messages{padding-top:12px;gap:12px}.bubble{background:#27272c;color:#f4f4f5}.user .bubble{background:#3d3d44;color:#fff}.play,.status{color:#bfc0c8}.status.error{color:#ffb5a8}.empty{font-size:13px;color:#999}.empty .mark,.empty b{display:none}
+    .controls{display:flex;justify-content:center;align-items:center;gap:12px}.controls button{border-radius:25px;min-height:48px}.mic{flex:0 1 130px;background:#303036;color:#fff;border:0}.mic.on{background:#72504d}
+    #start{background:#e9e9ef;color:#151518}#end{background:#ef444b;color:#fff;width:64px;padding:10px}#end svg{width:28px;height:28px;vertical-align:middle}#stop{font-size:12px}.notice{display:none}
+    @media(max-height:740px){.avatar{width:62px;height:62px}.identity{padding:6px}.identity h2{font-size:18px;margin:5px}.settings{padding:7px 12px}footer{padding-top:4px}.status{font-size:11px}}
   `;
+  function decodeReply(response) {
+    const raw=asText(response?.text||response?.choices?.[0]?.message?.content||response?.content).trim();
+    try { const data=JSON.parse(raw.replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''));
+      if(typeof data.text==='string'&&['accept','reject','continue','hangup'].includes(data.action))return data;
+    } catch {}
+    return {action:'continue',text:raw};
+  }
   function mount(container, api) {
     instances.get(container)?.();
     const layer=document.createElement('dialog'); layer.style.cssText='position:fixed;inset:0;margin:0;padding:0;border:0;width:100vw;max-width:none;height:100dvh;max-height:none;overflow:hidden'; container.append(layer); layer.showModal(); const shell = document.createElement('div');
@@ -54,20 +70,20 @@
         <p class="context" id="contextInfo">最近 12 条聊天、最多 10 条事实记忆及核心摘要；世界书与主聊天预设暂未带入。</p>
         <label class="row">沉默后接话<select id="silence"><option value="0">关闭</option><option value="30">30 秒</option><option value="45" selected>45 秒</option><option value="60">60 秒</option></select></label>
       </div></details>
-      <div class="messages" id="messages" role="log" aria-label="本页聊天记录"></div>
+      <div class="identity"><img id="avatar" class="avatar" alt=""><h2 id="callName">通话</h2><p class="phase" id="phase">准备拨号</p></div><div class="messages" id="messages" role="log" aria-label="本页聊天记录"></div>
       <footer><p class="status" id="status" role="status" aria-live="polite">正在准备…</p>
         <div class="compose"><textarea id="draft" maxlength="4000" placeholder="可以打字，也可以点下面说话" aria-label="消息内容" rows="2"></textarea><button id="send" class="send">发送</button></div>
         <div class="controls"><button id="start" class="stop">开始通话</button><button id="end" class="stop" disabled>结束并保存</button><button id="mic" class="mic">点一下说话</button><button id="stop" class="stop" disabled>停止</button></div>
-        <p class="notice">结束后保存文字到当前聊天；后台暂停。主动接话每次最多一句，沿用聊天及语音 API 计费。</p>
+        <p class="notice">结束后保存文字到当前聊天；切换应用不主动挂断。主动接话每次最多一句，沿用聊天及语音 API 计费。</p>
       </footer></section>`;
     layer.append(shell);
     const el = id => root.getElementById(id);
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const s = { active:false, ending:false, idle:null, proactiveUsed:false, sessionId:'', cid:'', disposed:false, ready:false, busy:false, operation:0, recognizer:null, recTimer:null, controller:null, audio:null, audioId:null, audioGeneration:0, ttsPending:new Map(), characters:[], character:null, persona:null, baseContext:'', records:[], urls:new Map(), historyKey:'', settings:{}, writeQueue:Promise.resolve() };
+    const s = { active:false, dialing:false, connectedAt:0, endAfterAudio:false, ending:false, player:new Audio(), idle:null, proactiveUsed:false, sessionId:'', cid:'', disposed:false, ready:false, busy:false, operation:0, recognizer:null, recTimer:null, controller:null, audio:null, audioId:null, audioGeneration:0, ttsPending:new Map(), characters:[], character:null, persona:null, baseContext:'', records:[], urls:new Map(), historyKey:'', settings:{}, writeQueue:Promise.resolve() };
     function status(message, error=false) { if (s.disposed) return; el('status').textContent=message; el('status').classList.toggle('error', error); }
     function controls() {
-      const locked=!s.ready||s.busy||s.ending, listening=!!s.recognizer;
-      el('start').disabled=locked||s.active;el('end').disabled=!s.active||s.ending;el('character').disabled=locked||s.active; el('send').disabled=locked||!s.active||listening||!el('draft').value.trim();
+      const locked=!s.ready||s.busy||s.ending||s.dialing, listening=!!s.recognizer;
+      el('start').classList.toggle('hidden',s.active||s.dialing);el('start').disabled=locked||s.active;el('end').disabled=(!s.active&&!s.dialing)||s.ending;el('character').disabled=locked||s.active; el('send').disabled=locked||!s.active||listening||!el('draft').value.trim();
       el('mic').disabled=locked||!s.active||!Recognition;
       el('mic').textContent=listening?'结束说话':'点一下说话'; el('mic').classList.toggle('on',listening);
       el('stop').disabled=!s.busy&&!listening&&!s.audio;
@@ -97,11 +113,11 @@
     }
     function persist() {
       if (!s.historyKey || s.disposed) return;
-      const key=s.historyKey, records=s.records.map(m=>({...m}));
-      s.writeQueue=s.writeQueue.catch(()=>{}).then(()=>api.storage.set(key,{records,sessionId:s.sessionId,cid:s.cid})).catch(()=>{status('本页记录保存失败；可点右上角导出。',true);});
+      const key=s.historyKey, records=s.records.map(m=>({...m})),sessionId=s.sessionId,cid=s.cid;
+      s.writeQueue=s.writeQueue.catch(()=>{}).then(()=>api.storage.set(key,{records,sessionId,cid})).catch(()=>{status('本页记录保存失败；可点右上角导出。',true);});
     }
     function saveSettings() {
-      const settings={characterId:s.character?.id, language:el('language').value,reply:el('reply').value,autosend:el('autosend').checked,autoplay:el('autoplay').checked,context:el('context').checked,voices:{...s.settings.voices,[s.character?.id]:el('voice').value.trim()}};
+      const settings={silence:el('silence').value,characterId:s.character?.id, language:el('language').value,reply:el('reply').value,autosend:el('autosend').checked,autoplay:el('autoplay').checked,context:el('context').checked,voices:{...s.settings.voices,[s.character?.id]:el('voice').value.trim()}};
       s.settings=settings;
       s.writeQueue=s.writeQueue.catch(()=>{}).then(()=>api.storage.set('settings',settings)).catch(()=>{status('设置未保存，下次打开可能恢复默认。',true);});
     }
@@ -115,7 +131,7 @@
     function stopAll(message='已停止。不会自动重发。') {
       clearTimeout(s.idle); const wasBusy=s.busy;
       s.operation++; s.controller?.abort();s.controller=null; abortRecognition();stopAudio();
-      s.busy=false;
+      s.busy=false;if(s.dialing){s.dialing=false;el('phase').textContent='已取消';}
       for(const m of s.records) if(m.state==='pending')m.state='failed';
       persist();render();
       status(wasBusy?message+' 已提交的请求可能仍在服务端完成并计费。':message);
@@ -189,6 +205,8 @@
       if(!s.character){status('还没有可选角色，请先在 Roche 添加角色。',true);render();return;}
       el('character').value=s.character.id;
       el('voice').value=s.settings.voices?.[s.character.id]||s.character.voiceId||s.character.ttsVoiceId||'';
+      el('callName').textContent=s.character.displayName||s.character.name||'角色';
+      el('avatar').src=s.character.avatar||s.character.avatarUrl||'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><rect width="96" height="96" fill="#36363b"/><circle cx="48" cy="35" r="15" fill="#aaa"/><ellipse cx="48" cy="83" rx="30" ry="27" fill="#aaa"/></svg>');
       el('summary').textContent=(s.character.displayName||s.character.name||'角色')+' · 聊天设置';
       s.historyKey='history:'+s.character.id;
       status('正在载入角色与本页会话…');render();
@@ -198,7 +216,7 @@
       s.records=records.filter(m=>['user','assistant'].includes(m?.role)&&typeof m.content==='string').map(m=>({...m,id:m.id||uid(),content:cut(m.content,8000),state:m.state==='pending'?'failed':m.state}));
       s.ready=true;render();saveSettings();
       status(context.status==='rejected'?'角色背景读取失败；请重新选择角色后再试。':Recognition?'准备好了。默认识别后先确认，再发送。':'此浏览器未提供语音识别，可用键盘听写输入，仍可朗读回复。',context.status==='rejected');
-      if(context.status==='rejected'){s.ready=false;controls();el('character').disabled=false;}
+      if(context.status==='rejected'){s.ready=false;controls();}
     }
     async function send(proactive=false) {
       proactive=proactive===true; const content=proactive?'The user has been quiet. Say one short natural check-in as the character. Do not invent a user reply.':el('draft').value.trim();
@@ -209,18 +227,18 @@
       const prior=s.records.filter(m=>!m.state).slice(-16);
       if(!proactive)s.records.push(turn);el('draft').value='';persist();render();status('正在等回复…');
       const language=el('reply').value;
-      const prompt='Continue a casual conversation as the selected character. Reply naturally, usually in 1–3 short sentences suitable for speaking aloud. Output plain spoken text, without message protocol tags, speaker prefixes, stage directions or unsolicited translations. '+(language==='Auto'?'Use the language of the latest user message.':'Reply in '+language+'.')+'\n\n'+s.baseContext;
+      const prompt='Continue a casual conversation as the selected character. Reply naturally, usually in 1–3 short sentences suitable for speaking aloud. Return JSON only: {"action":"continue" or "hangup","text":"spoken reply"}. Choose hangup only when the character actually ends this call. No speaker prefixes, stage directions or unsolicited translations. '+(language==='Auto'?'Use the language of the latest user message.':'Reply in '+language+'.')+'\n\n'+s.baseContext;
       let budget=6000;const recent=[];
       for(let i=prior.length-1;i>=0&&budget>0;i--){const text=cut(prior[i].content,Math.min(1500,budget));budget-=text.length;recent.unshift({role:prior[i].role,content:text});}
       s.controller=new AbortController();
       try{
         const response=await api.ai.chat({messages:[{role:'system',content:prompt},...recent,{role:'user',content}],stream:false,signal:s.controller.signal});
         if(s.disposed||s.operation!==token)return;
-        const answer=asText(response?.text||response?.choices?.[0]?.message?.content||response?.content).trim();
+        const decoded=decodeReply(response),answer=decoded.text.trim();s.endAfterAudio=decoded.action==='hangup';
         if(!answer)throw new Error('empty-reply');
         turn.state='';const reply={id:uid(),role:'assistant',content:cut(answer,8000)};s.records.push(reply);persist();
         s.busy=false;s.controller=null;render();status('已收到回复。');
-        if(el('autoplay').checked)await speak(reply); if(!s.audio)armIdle();
+        if(el('autoplay').checked)await speak(reply); if(!s.audio){if(s.endAfterAudio)await finish();else armIdle();}
       }catch(error){
         if(s.disposed||s.operation!==token)return;
         turn.state='failed';s.busy=false;s.controller=null;
@@ -229,11 +247,11 @@
       }
     }
     async function playURL(url, record, token) {
-      stopAudio();const audio=new Audio(url);s.audio=audio;s.audioId=record.id;
-      audio.onended=()=>{if(s.audio!==audio||s.disposed)return;stopAudio();status('播放结束，可以继续说话或打字。');controls();armIdle();};
-      audio.onerror=()=>{if(s.audio!==audio||s.disposed)return;stopAudio();status('音频播放失败。已有文字回复；不会重新生成回复。',true);controls();};
+      stopAudio();const audio=s.player;audio.src=url;s.audio=audio;s.audioId=record.id;
+      audio.onended=()=>{if(s.audio!==audio||s.disposed)return;stopAudio();status('播放结束，可以继续说话或打字。');controls();if(s.endAfterAudio)finish();else armIdle();};
+      audio.onerror=()=>{if(s.audio!==audio||s.disposed)return;stopAudio();status('音频播放失败。已有文字回复；不会重新生成回复。',true);controls();if(s.endAfterAudio)finish();};
       try{await audio.play();if(s.disposed||s.operation!==token)return;status('正在朗读…可点“停止”打断。');controls();}
-      catch{if(s.disposed||s.operation!==token)return;stopAudio();status('浏览器暂停了自动播放。请点回复下方“播放回复”，无需再次生成语音。');controls();}
+      catch(error){if(s.disposed||s.operation!==token)return;stopAudio();status(error?.name==='NotAllowedError'?'请点一次播放回复以允许声音；已缓存语音，不会重复计费。':'音频暂时无法播放，可点播放回复重放已有音频。',true);controls();}
     }
     async function speak(record) {
       if(s.disposed||s.ending||s.busy||s.recognizer||!s.ready)return;
@@ -268,11 +286,12 @@
 
     function armIdle(){
       clearTimeout(s.idle);const seconds=Number(el('silence').value);
-      if(!seconds||!s.active||s.ending||s.proactiveUsed||s.busy||s.audio||s.recognizer||document.hidden||el('draft').value.trim())return;
-      s.idle=setTimeout(()=>{if(!s.active||s.ending||s.busy||s.audio||s.recognizer||document.hidden||el('draft').value.trim())return;s.proactiveUsed=true;send(true);},seconds*1000);
+      if(!seconds||!s.active||s.ending||s.proactiveUsed||s.busy||s.audio||s.recognizer||el('draft').value.trim())return;
+      s.idle=setTimeout(()=>{if(!s.active||s.ending||s.busy||s.audio||s.recognizer||el('draft').value.trim())return;s.proactiveUsed=true;send(true);},seconds*1000);
     }
     async function finish(){
-      if(s.ending||!s.active)return;s.ending=true;stopAll('通话已结束。');controls();
+      if(s.dialing){s.dialing=false;s.operation++;s.controller?.abort();s.controller=null;s.busy=false;el('phase').textContent='已取消';controls();return;}
+      if(s.ending||!s.active)return;s.endAfterAudio=false;s.ending=true;stopAll('通话已结束。');controls();
       try{
         const messages=s.records.filter(m=>!m.state);
         if(messages.length){
@@ -281,12 +300,37 @@
           const result=await api.chat.createCard({id:s.sessionId,conversationId:s.cid,messageType:'call-record',isMe:true,senderId:'',timestamp:Date.now(),cardData:{title:'通话记录',transcript},modelText:'以下是用户与当前角色已发生的通话记录：\n'+transcript});
           if(!result?.id)throw Error('未确认聊天记录保存结果');
         }
-        await api.storage.set(s.historyKey,null);s.records=[];s.sessionId=uid();s.active=false;revokeAudio();render();status('已保存到当前聊天，后续可参与 Roche 的记忆总结。');
+        await api.storage.set(s.historyKey,null);s.records=[];s.sessionId=uid();s.active=false;s.connectedAt=0;el('phase').textContent='通话已结束';revokeAudio();render();status('已保存到当前聊天，后续可参与 Roche 的记忆总结。');
       }catch(e){status('保存未完成，通话草稿仍保留。请再次点结束并保存：'+e.message,true);}
       finally{s.ending=false;controls();}
     }
-    el('start').addEventListener('click',()=>{if(!s.ready||s.active)return;s.active=true;s.proactiveUsed=false;persist();controls();status('通话中，输入或说话后点发送。');armIdle();});
-    el('end').addEventListener('click',finish);el('silence').addEventListener('change',armIdle);
+    function unlockAudio(){
+      // Prime the same media element inside the tap; never loop audio to keep the page alive.
+      const a=s.player;if(s.audio)return;
+      a.src='data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQIAAACAgA==';
+      const p=a.play();if(p?.catch)p.catch(()=>{});
+    }
+    async function dial(){
+      if(!s.ready||s.active||s.dialing||s.busy)return;
+      unlockAudio();s.dialing=true;s.busy=true;s.endAfterAudio=false;const token=++s.operation;
+      s.controller=new AbortController();controls();el('phase').textContent='正在呼叫…';status('');
+      try{
+        const response=await api.ai.chat({messages:[{role:'system',content:s.baseContext+'\nThe user is calling you. Decide in character whether to accept or reject. Return JSON {"action":"accept" or "reject","text":"one short spoken greeting or refusal"}. Reply in '+(el('reply').value==='Auto'?'the language used in the recent conversation':el('reply').value)+'.'},{role:'user',content:'Incoming phone call.'}],stream:false,signal:s.controller.signal});
+        if(s.disposed||token!==s.operation)return;
+        const reply=decodeReply(response);if(!reply.text.trim())throw Error('empty reply');
+        s.dialing=false;s.busy=false;s.controller=null;s.active=true;s.connectedAt=Date.now();s.proactiveUsed=false;
+        s.endAfterAudio=reply.action==='reject';
+        const record={id:uid(),role:'assistant',content:cut(reply.text,8000)};s.records.push(record);persist();render();
+        el('phase').textContent=s.endAfterAudio?'对方未接听':'00:00';
+        if(el('autoplay').checked)await speak(record);
+        if(!s.audio){if(s.endAfterAudio)await finish();else armIdle();}
+      }catch(error){if(s.disposed||token!==s.operation)return;s.dialing=false;s.busy=false;s.controller=null;el('phase').textContent='未接通';status('呼叫未完成，请检查聊天接口后再拨；不会自动重试。',true);controls();}
+    }
+    el('start').addEventListener('click',dial);
+    el('end').innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15v-4q8-7 16 0v4l-4-1v-3q-4-2-8 0v3Z" fill="currentColor" stroke="currentColor" stroke-linejoin="round" stroke-width="2"/></svg>';
+    el('end').setAttribute('aria-label','挂断并保存');el('end').title='挂断并保存';
+    el('end').addEventListener('click',finish);el('silence').addEventListener('change',()=>{saveSettings();armIdle();});
+    const clock=setInterval(()=>{if(s.active&&!s.ending&&s.connectedAt&&!s.endAfterAudio){const seconds=Math.floor((Date.now()-s.connectedAt)/1000);el('phase').textContent=String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');}},1000);
 
     el('draft').addEventListener('input',()=>{clearTimeout(s.idle);if(s.recognizer){abortRecognition();status('已改为手动编辑。');}controls();});
     el('draft').addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)&&!e.isComposing){e.preventDefault();send();}});
@@ -294,13 +338,13 @@
     el('stop').addEventListener('click',()=>stopAll());
     el('character').addEventListener('change',()=>chooseCharacter(el('character').value));
     for(const id of ['language','reply','autosend','autoplay','voice'])el(id).addEventListener('change',()=>{saveSettings();if(id==='voice'||id==='reply'){stopAudio();revokeAudio();render();}if(id==='autosend')status(el(id).checked?'已开启：识别得到完整结果后将直接发送。':'已关闭：识别后先确认文字，再发送。');});
-    el('context').addEventListener('change',async()=>{s.ready=false;controls();const token=++s.operation;status('正在更新带入的背景…');try{await loadContext(s.character,token);if(s.disposed||token!==s.operation)return;s.ready=true;saveSettings();status('背景已更新。');}catch{status('背景读取失败，请重新选择角色。',true);}controls();el('character').disabled=false;});
+    el('context').addEventListener('change',async()=>{s.ready=false;controls();const token=++s.operation;status('正在更新带入的背景…');try{await loadContext(s.character,token);if(s.disposed||token!==s.operation)return;s.ready=true;saveSettings();status('背景已更新。');}catch{status('背景读取失败，请重新选择角色。',true);}controls();});
     el('export').addEventListener('click',()=>{const blob=new Blob([JSON.stringify({version:1,character:s.character?.displayName||s.character?.name,exportedAt:new Date().toISOString(),messages:s.records},null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='Roche-语音聊天-'+new Date().toISOString().slice(0,10)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),60000);});
-    const onHide=()=>{clearTimeout(s.idle);if(document.hidden&&(s.busy||s.recognizer||s.audio))stopAll('已切到后台，语音已暂停。');};
-    const onPageHide=()=>{if(s.busy||s.recognizer||s.audio)stopAll('页面已离开。');};
+    const onHide=()=>{persist();if(!document.hidden){controls();if(!s.audio)armIdle();}};
+    const onPageHide=()=>{persist();};
     document.addEventListener('visibilitychange',onHide);window.addEventListener('pagehide',onPageHide);
-    function cleanup(){if(s.disposed)return;clearTimeout(s.idle);s.disposed=true;s.operation++;s.controller?.abort();abortRecognition();stopAudio();revokeAudio();document.removeEventListener('visibilitychange',onHide);window.removeEventListener('pagehide',onPageHide);layer.remove();instances.delete(container);}
-    instances.set(container,cleanup);el('close').addEventListener('click',async()=>{if(s.active){await finish();return;}cleanup();api.ui.closeApp();});layer.addEventListener('cancel',e=>{e.preventDefault();el('close').click();});
+    function cleanup(){if(s.disposed)return;clearTimeout(s.idle);clearInterval(clock);s.disposed=true;s.operation++;s.controller?.abort();abortRecognition();stopAudio();revokeAudio();document.removeEventListener('visibilitychange',onHide);window.removeEventListener('pagehide',onPageHide);layer.remove();instances.delete(container);}
+    instances.set(container,cleanup);el('close').addEventListener('click',async()=>{if(s.active||s.dialing){await finish();return;}cleanup();api.ui.closeApp();});layer.addEventListener('cancel',e=>{e.preventDefault();el('close').click();});
     render();
     (async()=>{
       try{
@@ -308,12 +352,12 @@
         if(s.disposed)return;
         s.characters=Array.isArray(characters)?characters:[];s.settings=settings||{};
         for(const c of s.characters){const option=document.createElement('option');option.value=c.id;option.textContent=c.displayName||c.name||c.id;el('character').append(option);}
-        for(const id of ['language','reply'])if(s.settings[id])el(id).value=s.settings[id];
+        for(const id of ['language','reply','silence'])if(s.settings[id])el(id).value=s.settings[id];
         for(const id of ['autosend','autoplay','context'])if(typeof s.settings[id]==='boolean')el(id).checked=s.settings[id];
         await chooseCharacter(s.characters.find(c=>String(c.conversationId||c.id)===conversationId)?.id||s.settings.characterId);
       }catch{status('插件接口未准备好，或当前 Roche 版本不兼容。请关闭后重新打开；没有发送聊天请求。',true);}
     })();
   }
   function card(el,data){const d=data?.cardData||data?.data||data||{};el.replaceChildren();const box=document.createElement('details');box.style.cssText='padding:14px;border-radius:18px;background:#f0f0f3;color:#222;max-width:100%';const title=document.createElement('summary');title.textContent='通话记录';const text=document.createElement('p');text.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere';text.textContent=d.transcript||'';box.append(title,text);el.append(box);}
-  window.RochePlugin.register({id:'roche-call',name:'通话',version:'0.1.0',chat:{scope:{conversationTypes:['direct']},plusActions:[{id:'call',label:'通话',iconSvg:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M5 3h4l2 5-3 2c2 3 3 4 6 6l2-3 5 2v4c-8 5-22-9-16-16Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',open:async(ctx,api)=>{conversationId=String(ctx.conversationId||'');await api.ui.openApp('voice-chat');}}],messageTypes:[{id:'call-record',mount:card,update:card,unmount:el=>el.replaceChildren()}]},apps:[{id:'voice-chat',name:'通话',icon:'call',mount,unmount(container){instances.get(container)?.();}}]});
+  window.RochePlugin.register({id:'roche-call',name:'通话',version:'0.2.0',chat:{scope:{conversationTypes:['direct']},plusActions:[{id:'call',label:'通话',iconSvg:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M5 3h4l2 5-3 2c2 3 3 4 6 6l2-3 5 2v4c-8 5-22-9-16-16Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',open:async(ctx,api)=>{conversationId=String(ctx.conversationId||'');await api.ui.openApp('voice-chat');}}],messageTypes:[{id:'call-record',mount:card,update:card,unmount:el=>el.replaceChildren()}]},apps:[{id:'voice-chat',name:'通话',icon:'call',mount,unmount(container){instances.get(container)?.();}}]});
 })();
