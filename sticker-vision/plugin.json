@@ -1,8 +1,8 @@
 {
   "id": "roche-sticker-vision",
   "name": "表情识别",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "独立识图 API，让角色读取双方原生表情包的实际画面；支持拉取模型、描述缓存与修正。",
-  "entry": "plugin.js?v=0.1.1",
+  "entry": "plugin.js?v=0.1.2",
   "permissions": ["conversation:read", "storage", "ui", "network"]
 }
