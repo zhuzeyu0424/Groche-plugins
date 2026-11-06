@@ -1,4 +1,4 @@
-/* Roche 气泡贴表情 0.5.4. Native menu + character reactions; no extra AI calls or chat writes. */
+/* Roche 气泡贴表情 0.5.5. Native menu + character reactions; no extra AI calls or chat writes. */
 (() => {
   'use strict';
   if (!window.RochePlugin?.register) throw new Error('请在 Roche 插件管理里安装。');
@@ -355,7 +355,84 @@
   ui.querySelector('.remove').onclick=()=>{if(selected&&save(selected,null))close();};
   ui.querySelector('.corner').onclick=()=>{if(!selected)return;selected.corner=selected.corner==='left'?'right':'left';const r=read(selected.id);if(r){save(selected,{...r,corner:selected.corner});close();}else toast('下一个表情会贴在'+(selected.corner==='left'?'左':'右')+'上角');};
   ui.querySelector('.native').onclick=()=>{const info=selected;close();if(!info?.target.isConnected)return;const r=info.target.getBoundingClientRect();info.target.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,view:window,clientX:r.left+r.width/2,clientY:r.top+r.height/2}));};
-  function removeBinding(target,b){b.host.remove();if(b.position!==null&&target.style.position==='relative')target.style.position=b.position;bindings.delete(target);}
+  // Keep the complete silhouette outside the painted bubble. A plugin-owned strip
+  // precedes the message, so neither text padding nor translated text is changed.
+  const BADGE_WIDTH=30,BADGE_HEIGHT=110/3,BADGE_GAP=3;
+  const edgeResize=typeof ResizeObserver==='function'?new ResizeObserver(schedule):null;
+  const watchedEdges=new Map();
+  function watchEdge(element){if(!element||!edgeResize)return;const n=watchedEdges.get(element)||0;if(!n)edgeResize.observe(element);watchedEdges.set(element,n+1);}
+  function unwatchEdge(element){if(!element||!edgeResize)return;const n=(watchedEdges.get(element)||1)-1;if(n>0)watchedEdges.set(element,n);else{watchedEdges.delete(element);edgeResize.unobserve(element);}}
+  function removeBinding(target,b){for(const el of b.watched||[])unwatchEdge(el);b.host.remove();b.spacer?.remove();bindings.delete(target);}
+  function paintColor(value){return !!value&&value!=='transparent'&&!/^rgba\([^)]*,\s*0(?:\.0+)?\s*\)$/.test(value);}
+  function hasPaint(style){return paintColor(style.backgroundColor)||(style.backgroundImage&&style.backgroundImage!=='none')||(style.borderTopStyle!=='none'&&parseFloat(style.borderTopWidth)>0);}
+  function surfaceRect(target){
+    const bubble=target.closest('.chat-bubble'),child=target.firstElementChild;
+    const candidates=[target,bubble,child&&!child.dataset.rocheTapback?child:null].filter(Boolean),rects=[];
+    for(const el of new Set(candidates)){
+      const rect=el.getBoundingClientRect();if(!rect.width||!rect.height)continue;
+      const style=getComputedStyle(el);if(hasPaint(style))rects.push(rect);
+      const pseudo=getComputedStyle(el,'::before');
+      if(pseudo.content!=='none'&&pseudo.content!=='normal'&&hasPaint(pseudo)){
+        const sx=el.offsetWidth?rect.width/el.offsetWidth:1,sy=el.offsetHeight?rect.height/el.offsetHeight:1;
+        const left=Number.parseFloat(pseudo.left)||0,top=Number.parseFloat(pseudo.top)||0;
+        const right=Number.parseFloat(pseudo.right)||0,bottom=Number.parseFloat(pseudo.bottom)||0;
+        rects.push({left:rect.left+left*sx,right:rect.right-right*sx,top:rect.top+top*sy,bottom:rect.bottom-bottom*sy});
+      }
+    }
+    if(!rects.length)return target.getBoundingClientRect();
+    return {left:Math.min(...rects.map(r=>r.left)),right:Math.max(...rects.map(r=>r.right)),top:Math.min(...rects.map(r=>r.top)),bottom:Math.max(...rects.map(r=>r.bottom))};
+  }
+  function paintedBottom(element){
+    if(!element)return -Infinity;let bottom=-Infinity;
+    for(const el of [element,...element.querySelectorAll('*')]){
+      if(el.closest('[data-roche-tapback]'))continue;
+      const rect=el.getBoundingClientRect(),style=getComputedStyle(el);
+      if(rect.width&&rect.height&&style.visibility!=='hidden'&&style.display!=='none')bottom=Math.max(bottom,rect.bottom);
+    }
+    return bottom;
+  }
+  function makeEdgeSpace(target,host){
+    const owner=target.closest('[id^="msg-"]');if(!owner)return null;
+    let anchor=owner;
+    // Current Roche uses a vertical .chat-message-row. Never insert a new item
+    // among the avatar and the bubble in a horizontal flex row.
+    while(anchor.parentElement){
+      const parent=anchor.parentElement,style=getComputedStyle(parent);
+      if(!['flex','inline-flex'].includes(style.display)||style.flexDirection.startsWith('column'))break;
+      if(parent.matches('.chat-scroll-area')||parent.querySelectorAll('[id^="msg-"]').length>1)return null;
+      anchor=parent;
+    }
+    if(!anchor.parentElement)return null;
+    const spacer=node('div');spacer.dataset.rocheTapback='space';spacer.dataset.messageId=owner.id.slice(4);
+    spacer.style.cssText='display:block!important;position:relative!important;box-sizing:border-box!important;flex:0 0 auto!important;min-width:0!important;width:100%!important;min-height:0!important;height:40px!important;padding:0!important;margin:0!important;border:0!important;overflow:visible!important;pointer-events:none!important;z-index:5!important;';
+    host.dataset.messageId=owner.id.slice(4);spacer.append(host);anchor.before(spacer);
+    const watched=[...new Set([target,owner,target.closest('.chat-bubble')].filter(Boolean))];for(const el of watched)watchEdge(el);
+    return {owner,anchor,spacer,watched};
+  }
+  function placeEdge(target,b,corner,owners){
+    if(!b.spacer.isConnected||b.anchor.parentElement!==b.spacer.parentElement)return false;
+    if(b.spacer.nextSibling!==b.anchor)b.anchor.before(b.spacer);
+    const height=Math.ceil(BADGE_HEIGHT+BADGE_GAP);
+    if(b.spacer.style.height!==height+'px')b.spacer.style.setProperty('height',height+'px','important');
+    let space=b.spacer.getBoundingClientRect(),surface=surfaceRect(target);
+    let sx=b.spacer.offsetWidth?space.width/b.spacer.offsetWidth:1,sy=b.spacer.offsetHeight?space.height/b.spacer.offsetHeight:1;
+    if(!Number.isFinite(sx)||!Number.isFinite(sy)||sx<=0||sy<=0||!surface||!Number.isFinite(surface.top))return false;
+    let previous=null;
+    for(const owner of owners){if(owner===b.owner)break;previous=owner;}
+    const preceding=b.spacer.previousElementSibling;
+    const before=Math.max(paintedBottom(previous),preceding&&!preceding.contains(b.owner)?paintedBottom(preceding):-Infinity);
+    const extra=Math.max(0,before+BADGE_GAP*sy-(surface.top-(BADGE_HEIGHT+BADGE_GAP)*sy));
+    if(extra>.1){
+      b.spacer.style.setProperty('height',(height+extra/sy)+'px','important');
+      space=b.spacer.getBoundingClientRect();surface=surfaceRect(target);
+    }
+    const viewport=window.visualViewport,min=(viewport?.offsetLeft||0)+4,max=min+(viewport?.width||innerWidth)-8;
+    const rawLeft=corner==='left'?surface.left-4*sx:surface.right-(BADGE_WIDTH-4)*sx;
+    const left=Math.max(min,Math.min(max-BADGE_WIDTH*sx,rawLeft));
+    const x=(left-space.left)/sx,y=(surface.top-BADGE_GAP*sy-BADGE_HEIGHT*sy-space.top)/sy;
+    for(const [key,value]of Object.entries({left:x+'px',top:y+'px',right:'auto'}))if(b.host.style.getPropertyValue(key)!==value)b.host.style.setProperty(key,value,'important');
+    return true;
+  }
   // Sample the reaction author's side, never the message receiving the reaction.
   function reactionPalette(area,side){
     const visibleColor=c=>c&&c!=='transparent'&&!/^rgba\([^)]*,\s*0\s*\)$/.test(c);
@@ -402,21 +479,22 @@
     if(disposed||busy)return;busy=true;characterReactions.cleanVisible();
     try{
       const targets=enabled?[...document.querySelectorAll(TARGET)].filter(t=>identify(t)):[];
-      const live=new Set(targets), palettes=new Map();
+      const live=new Set(targets), palettes=new Map(),areaOwners=new Map();
+      for(const t of targets){const area=t.closest('.chat-scroll-area');if(!areaOwners.has(area))areaOwners.set(area,[...area.querySelectorAll('[id^="msg-"]')].filter(el=>el.getClientRects().length));}
       for(const [t,b]of bindings)if(!live.has(t)||!read(identify(t)?.id))removeBinding(t,b);
       for(const t of targets){
         const info=identify(t),r=read(info.id);if(!r)continue;
         let b=bindings.get(t);
-        if(b&&!t.contains(b.host)){removeBinding(t,b);b=null;}
+        if(b&&(!b.spacer?.contains(b.host)||!b.spacer.isConnected||b.spacer.parentElement!==b.anchor.parentElement||b.owner!==t.closest('[id^="msg-"]'))){removeBinding(t,b);b=null;}
         if(!b){
           const host=node('span');host.dataset.rocheTapback='badge';
-          host.style.cssText='position:absolute!important;top:-23px!important;z-index:5!important;width:36px!important;height:44px!important;display:block!important;pointer-events:auto!important;line-height:1!important;';
+          host.style.cssText='position:absolute!important;z-index:5!important;width:30px!important;height:36.666667px!important;display:block!important;pointer-events:auto!important;line-height:1!important;';
           const root=host.attachShadow({mode:'open'});
-          root.innerHTML=`<style>:host{all:initial}button{position:relative;isolation:isolate;box-sizing:border-box;display:block;width:36px;height:44px;margin:0;padding:0;border:0;background:transparent;color:var(--rtb-ink,#fff);cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent;filter:drop-shadow(0 .5px .6px #0003)}.glyph{position:absolute;top:0;left:0;box-sizing:border-box;display:grid;place-items:center;width:32px;height:32px;margin:0;padding:0;border:0;font:20px/1 'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif;letter-spacing:0;white-space:nowrap;pointer-events:none}button::before{content:"";position:absolute;inset:0;z-index:-1;background-color:var(--rtb-bg,#0a84ff);background-image:var(--rtb-image,none);background-size:100% 100%;-webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2036%2044%27%3E%3Ccircle%20cx%3D%2716%27%20cy%3D%2716%27%20r%3D%2716%27%2F%3E%3Ccircle%20cx%3D%2728%27%20cy%3D%2730%27%20r%3D%275%27%2F%3E%3Ccircle%20cx%3D%2733%27%20cy%3D%2740%27%20r%3D%272.5%27%2F%3E%3C%2Fsvg%3E") center/100% 100% no-repeat;mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2036%2044%27%3E%3Ccircle%20cx%3D%2716%27%20cy%3D%2716%27%20r%3D%2716%27%2F%3E%3Ccircle%20cx%3D%2728%27%20cy%3D%2730%27%20r%3D%275%27%2F%3E%3Ccircle%20cx%3D%2733%27%20cy%3D%2740%27%20r%3D%272.5%27%2F%3E%3C%2Fsvg%3E") center/100% 100% no-repeat}:host([data-corner=left]) button::before{transform:scaleX(-1)}:host([data-corner=left]) .glyph{left:4px}button:focus-visible{outline:2px solid var(--rtb-ink,#827060);outline-offset:3px;border-radius:50%}@media(prefers-reduced-motion:no-preference){button{animation:pop .23s ease-out}@keyframes pop{0%{transform:scale(.6) rotate(-9deg)}70%{transform:scale(1.12)}100%{transform:scale(1)}}}</style><button type="button"><span class="glyph" aria-hidden="true"></span></button>`;
+          root.innerHTML=`<style>:host{all:initial}button{position:relative;isolation:isolate;box-sizing:border-box;display:block;width:30px;height:36.666667px;margin:0;padding:0;border:0;background:transparent;color:var(--rtb-ink,#fff);cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent;filter:drop-shadow(0 .5px .6px #0003)}.glyph{position:absolute;top:0;left:0;box-sizing:border-box;display:grid;place-items:center;width:26.666667px;height:26.666667px;margin:0;padding:0;border:0;font:18px/1 'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif;letter-spacing:0;white-space:nowrap;pointer-events:none}button::before{content:"";position:absolute;inset:0;z-index:-1;background-color:var(--rtb-bg,#0a84ff);background-image:var(--rtb-image,none);background-size:100% 100%;-webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2036%2044%27%3E%3Ccircle%20cx%3D%2716%27%20cy%3D%2716%27%20r%3D%2716%27%2F%3E%3Ccircle%20cx%3D%2728%27%20cy%3D%2730%27%20r%3D%275%27%2F%3E%3Ccircle%20cx%3D%2733%27%20cy%3D%2740%27%20r%3D%272.5%27%2F%3E%3C%2Fsvg%3E") center/100% 100% no-repeat;mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2036%2044%27%3E%3Ccircle%20cx%3D%2716%27%20cy%3D%2716%27%20r%3D%2716%27%2F%3E%3Ccircle%20cx%3D%2728%27%20cy%3D%2730%27%20r%3D%275%27%2F%3E%3Ccircle%20cx%3D%2733%27%20cy%3D%2740%27%20r%3D%272.5%27%2F%3E%3C%2Fsvg%3E") center/100% 100% no-repeat}:host([data-corner=left]) button::before{transform:scaleX(-1)}:host([data-corner=left]) .glyph{left:3.333333px}button:focus-visible{outline:2px solid var(--rtb-ink,#827060);outline-offset:3px;border-radius:50%}@media(prefers-reduced-motion:no-preference){button{animation:pop .23s ease-out}@keyframes pop{0%{transform:scale(.6) rotate(-9deg)}70%{transform:scale(1.12)}100%{transform:scale(1)}}}</style><button type="button"><span class="glyph" aria-hidden="true"></span></button>`;
           const button=root.querySelector('button');button.onclick=e=>{e.stopPropagation();open(identify(t));};
           for(const event of['pointerdown','touchstart','touchend','contextmenu'])host.addEventListener(event,e=>e.stopPropagation());
-          const position=getComputedStyle(t).position==='static'?t.style.position:null;if(position!==null)t.style.position='relative';
-          b={host,button,position};bindings.set(t,b);t.append(host);
+          const layout=makeEdgeSpace(t,host);if(!layout){host.remove();continue;}
+          b={host,button,...layout};bindings.set(t,b);
         }
         const area=t.closest('.chat-scroll-area'), authorSide=r.actor==='character'?'received':'sent';
         let colors=palettes.get(area);if(!colors){colors={};palettes.set(area,colors);}
@@ -426,9 +504,7 @@
         const glyph=b.button.querySelector('.glyph');
         if(glyph.textContent!==r.emoji)glyph.textContent=r.emoji;
         b.button.setAttribute('aria-label',(r.actor==='character'?'角色贴的 ':'你贴的 ')+r.emoji+'，点击更换或移除');
-        const a=r.corner==='left'?'7px':'auto',z=r.corner==='right'?'7px':'auto';
-        if(b.host.style.left!==a)b.host.style.setProperty('left',a,'important');
-        if(b.host.style.right!==z)b.host.style.setProperty('right',z,'important');
+        b.host.style.visibility=placeEdge(t,b,r.corner,areaOwners.get(area)||[])?'visible':'hidden';
       }
       if(selected&&(!selected.target.isConnected||identify(selected.target)?.id!==selected.id))close();
       decorateNativeMenu();
@@ -796,7 +872,7 @@ function rocheFetchCoordinator(){
   const characterReactions=createCharacterReactions();
   function mount(container,api){
     panels.get(container)?.();const host=node('div');container.append(host);const root=host.attachShadow({mode:'open'});
-    root.innerHTML=`<style>:host{display:block;padding:22px;color:#302d27;background:#faf9f6;font:15px/1.7 -apple-system,BlinkMacSystemFont,sans-serif;min-height:100%;box-sizing:border-box}h2{margin:8px 0}button{font:inherit;border:0;border-radius:12px;background:#e8e3db;color:#302d27;padding:10px 15px;margin:4px 6px 4px 0}p{max-width:500px}.note{color:#777;font-size:13px}</style><button class="back">返回</button><h2>气泡贴表情 · 0.5.4</h2><p>长按文字或语音气泡，在原菜单里点“贴表情”。${EMOJI.length} 个表情，可按分类挑选或搜索。点已贴的表情可以更换、移除或换到另一边。</p><button class="toggle"></button><button class="character-toggle"></button><p class="character-state"></p><button class="export">导出表情</button><button class="import">导入表情</button><input type="file" accept="application/json,.json" hidden><p class="note">表情保存在当前浏览器。角色贴表情开启时，会随正常线上私聊发送少量近期消息及表情上下文；不额外请求 AI，不改写原消息。角色贴完后至少隔两轮再贴；明确让角色贴表情时可例外，手动贴不受影响。暂不支持后台托管、群聊或通话。换设备前单独导出。停用或卸载后请刷新 Roche。</p><p class="status" role="status"></p>`;
+    root.innerHTML=`<style>:host{display:block;padding:22px;color:#302d27;background:#faf9f6;font:15px/1.7 -apple-system,BlinkMacSystemFont,sans-serif;min-height:100%;box-sizing:border-box}h2{margin:8px 0}button{font:inherit;border:0;border-radius:12px;background:#e8e3db;color:#302d27;padding:10px 15px;margin:4px 6px 4px 0}p{max-width:500px}.note{color:#777;font-size:13px}</style><button class="back">返回</button><h2>气泡贴表情 · 0.5.5</h2><p>长按文字或语音气泡，在原菜单里点“贴表情”。${EMOJI.length} 个表情，可按分类挑选或搜索。表情贴在气泡外侧上角，自动留白。点表情可更换、移除或换边。</p><button class="toggle"></button><button class="character-toggle"></button><p class="character-state"></p><button class="export">导出表情</button><button class="import">导入表情</button><input type="file" accept="application/json,.json" hidden><p class="note">表情保存在当前浏览器。角色贴表情开启时，会随正常线上私聊发送少量近期消息及表情上下文；不额外请求 AI，不改写原消息。角色贴完后至少隔两轮再贴；明确让角色贴表情时可例外，手动贴不受影响。暂不支持后台托管、群聊或通话。换设备前单独导出。停用或卸载后请刷新 Roche。</p><p class="status" role="status"></p>`;
     const toggle=root.querySelector('.toggle'),status=root.querySelector('.status');
     const label=()=>toggle.textContent=enabled?'已开启 · 点击关闭':'已关闭 · 点击开启';label();
     const charToggle=root.querySelector('.character-toggle');
@@ -814,7 +890,8 @@ function rocheFetchCoordinator(){
     }catch(e){status.textContent=e.message;}finally{input.value='';}};
     panels.set(container,()=>{host.remove();panels.delete(container);});
   }
-  function dispose(){if(disposed)return;disposed=true;characterReactions.dispose();clearTimeout(toastTimer);cancelAnimationFrame(scanFrame);observer?.disconnect();themeObserver.disconnect();listeners.forEach(f=>f());for(const [t,b]of bindings)removeBinding(t,b);for(const b of menuEntries.values())b.remove();menuEntries.clear();for(const clean of [...panels.values()])clean();shell.remove();}
-  window.RochePlugin.register({id:'roche-tapback',name:'气泡贴表情',version:'0.5.4',chat:{scope:{conversationTypes:['direct']},contextProvider:characterReactions.contextProvider},apps:[{id:'roche-tapback-settings',name:'气泡贴表情',icon:'add_reaction',mount,unmount:c=>panels.get(c)?.()}]});
+  function dispose(){if(disposed)return;disposed=true;characterReactions.dispose();clearTimeout(toastTimer);cancelAnimationFrame(scanFrame);observer?.disconnect();themeObserver.disconnect();edgeResize?.disconnect();watchedEdges.clear();listeners.forEach(f=>f());for(const [t,b]of bindings)removeBinding(t,b);for(const b of menuEntries.values())b.remove();menuEntries.clear();for(const clean of [...panels.values()])clean();shell.remove();}
+  window.RochePlugin.register({id:'roche-tapback',name:'气泡贴表情',version:'0.5.5',chat:{scope:{conversationTypes:['direct']},contextProvider:characterReactions.contextProvider},apps:[{id:'roche-tapback-settings',name:'气泡贴表情',icon:'add_reaction',mount,unmount:c=>panels.get(c)?.()}]});
   window.__rocheTapbackV1={dispose};scan();
 })();
+
