@@ -1,0 +1,13 @@
+{
+  "id": "roche-history-cleaner",
+  "name": "记录清理",
+  "version": "0.1.0",
+  "description": "在聊天搜索和线下历史中批量清理记录，预览范围后确认删除；保留已保存的记忆与归档索引。",
+  "entry": "plugin.js?v=0.1.0",
+  "permissions": [
+    "conversation:read",
+    "conversation:write",
+    "storage",
+    "ui"
+  ]
+}
