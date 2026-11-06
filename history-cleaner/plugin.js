@@ -1,4 +1,4 @@
-/* Roche 记录清理 0.1.0. User-confirmed scoped deletion; memories stay intact. */
+/* Roche 记录清理 0.1.1. User-confirmed scoped deletion; memories stay intact. */
 (() => {
 'use strict';
   const PROTECTED_TYPES = new Set(['system_memory','system','system_notice','hidden','system_memory_summary']);
@@ -233,12 +233,38 @@ function attachHistoryEntries(onOpen) {
   };
   const visible = element => element?.isConnected && element.getClientRects().length > 0 && !element.closest('[hidden],[inert]');
   function owners(element) {
-    const components = [], seen = new Set();
+    // Production Vue omits __vueParentComponent on rendered DOM nodes. Its mounted
+    // container still retains the live root vnode; walk only active rendered branches
+    // and match the actual header/title vnode instead of guessing an active chat ID.
+    const roots = new Set();
     for (let node = element; node && node !== document; node = node.parentElement) {
-      let current = node.__vueParentComponent;
-      while (current && !seen.has(current)) {
-        seen.add(current);components.push(current);current = current.parent;
-      }
+      if(node._vnode)roots.add(node._vnode);
+      if(node.__vue_app__?._container?._vnode)roots.add(node.__vue_app__._container._vnode);
+    }
+    for(const container of document.querySelectorAll('#app,[data-v-app]')){
+      if(container._vnode)roots.add(container._vnode);
+      if(container.__vue_app__?._container?._vnode)roots.add(container.__vue_app__._container._vnode);
+    }
+    const visited=new Set(),matches=[];
+    function visit(vnode,owner,depth){
+      if(!vnode||typeof vnode!=='object'||visited.has(vnode)||visited.size>=50000)return;
+      visited.add(vnode);
+      const current=vnode.component||owner;
+      if(current?.isUnmounted||current?.isDeactivated)return;
+      if(vnode.el===element&&current)matches.push({owner:current,depth});
+      if(vnode.component?.subTree)visit(vnode.component.subTree,current,depth+1);
+      if(Array.isArray(vnode.children))for(const child of vnode.children)visit(child,current,depth+1);
+      if(vnode.suspense?.activeBranch)visit(vnode.suspense.activeBranch,current,depth+1);
+    }
+    for(const root of roots)visit(root,null,0);
+    let current=matches.sort((a,b)=>b.depth-a.depth)[0]?.owner;
+    // Development builds and old supported hosts can expose the direct hook.
+    if(!current)for(let node=element;node&&node!==document;node=node.parentElement){
+      if(node.__vueParentComponent){current=node.__vueParentComponent;break;}
+    }
+    const components=[],seen=new Set();
+    while(current&&!seen.has(current)){
+      seen.add(current);components.push(current);current=current.parent;
     }
     return components;
   }
@@ -285,7 +311,7 @@ function attachHistoryEntries(onOpen) {
       }}});
     };
     row.append(button);
-    if(mode==='online') target.append(row);
+    if(mode==='online') target.insertBefore(row,anchor.nextSibling);
     else target.parentElement.insertBefore(row,target.nextSibling);
     entries.set(anchor,{row,button,mode,resolve});
   }
@@ -311,11 +337,18 @@ function attachHistoryEntries(onOpen) {
   window.addEventListener('pageshow',schedule);
   document.addEventListener('visibilitychange',schedule);
   scan();
-  return ()=>{
+  const dispose=()=>{
     if(disposed)return;disposed=true;observer.disconnect();if(scheduled)cancelAnimationFrame(scheduled);
     window.removeEventListener('pageshow',schedule);document.removeEventListener('visibilitychange',schedule);
     for(const anchor of [...entries.keys()])drop(anchor);
   };
+  dispose.rescan=()=>{if(disposed)return;if(scheduled)cancelAnimationFrame(scheduled);scan();};
+  dispose.status=()=>{
+    const online=[...document.querySelectorAll('.chat-search-header-row')].filter(visible);
+    const offline=[...document.querySelectorAll('span.font-serif.font-bold.text-lg')].filter(el=>visible(el)&&el.textContent.trim()==='历史记录');
+    return {onlineCandidates:online.length,offlineCandidates:offline.length,entries:entries.size,scopeResolved:online.filter(onlineContext).length+offline.filter(offlineContext).length,productionRoots:[...document.querySelectorAll('#app,[data-v-app]')].filter(el=>el._vnode||el.__vue_app__?._container?._vnode).length,disposed};
+  };
+  return dispose;
 }
 
 
@@ -557,7 +590,7 @@ class CleanerDialog {
 }
 
 function installHistoryCleaner(){
-  const ID='roche-history-cleaner',VERSION='0.1.0';
+  const ID='roche-history-cleaner',VERSION='0.1.1';
   if(!window.RochePlugin?.register)throw Error('请在 Roche 插件管理中安装');
   window.__rocheHistoryCleaner?.dispose?.();
   let view=null,disposed=false,opening=false;
@@ -567,8 +600,18 @@ function installHistoryCleaner(){
     try{const host=await createHistoryHost();if(disposed)return;view=new CleanerDialog(new CleanupSession(host,context));await view.open();}
     catch(e){window.Roche?.ui?.toast?.(e.message||'暂不支持当前 Roche 版本');}finally{opening=false;}
   });
-  window.__rocheHistoryCleaner={version:VERSION,dispose(){if(disposed)return;disposed=true;detach();view?.destroy();view=null;}};
-  window.RochePlugin.register({id:ID,name:'记录清理',version:VERSION,apps:[{id:'roche-history-cleaner-help',name:'记录清理',icon:'delete_sweep',mount(el){el.style.cssText='padding:24px;font:15px/1.8 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#29292e;background:white;';el.replaceChildren();const h=document.createElement('h2');h.textContent='记录清理';const p=document.createElement('p');p.textContent='线上：聊天 → 搜索聊天记录 → 批量清理。';const q=document.createElement('p');q.textContent='线下：历史记录 → 批量清理。';const s=document.createElement('p');s.style.cssText='font-size:13px;color:#808089';s.textContent='先预览，再确认删除。保留已有记忆；线下仅清理归档正文，历史索引保留。';el.append(h,p,q,s);}}]});
+  window.__rocheHistoryCleaner={version:VERSION,inspect:()=>detach.status(),rescan:()=>detach.rescan(),dispose(){if(disposed)return;disposed=true;detach();view?.destroy();view=null;}};
+  window.RochePlugin.register({id:ID,name:'记录清理',version:VERSION,apps:[{id:'roche-history-cleaner-help',name:'记录清理',icon:'delete_sweep',mount(el){
+    el.style.cssText='padding:24px;font:15px/1.8 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#29292e;background:white;';el.replaceChildren();
+    const h=document.createElement('h2');h.textContent='记录清理';const version=document.createElement('p');version.textContent='v'+VERSION;version.style.cssText='font-size:12px;color:#808089;margin-top:-12px';
+    const p=document.createElement('p');p.textContent='线上：打开搜索聊天记录，在搜索框下方点“批量清理”。';
+    const q=document.createElement('p');q.textContent='线下：打开历史记录，在标题下方点“批量清理”。';
+    const s=document.createElement('p');s.style.cssText='font-size:13px;color:#808089';s.textContent='先预览，再确认删除。保留已有记忆；线下仅清理归档正文，历史索引保留。';
+    const button=document.createElement('button');button.textContent='检查入口';button.type='button';button.style.cssText='appearance:none;-webkit-appearance:none;border:1px solid #dedee4;border-radius:22px;padding:10px 20px;background:#f5f5f7;color:#222;font:inherit;min-height:44px;';
+    const status=document.createElement('p');status.style.cssText='font-size:13px;color:#767680';status.setAttribute('role','status');
+    button.onclick=()=>{detach.rescan();const info=detach.status();status.textContent=info.disposed?'插件已重载，请关闭后重新打开本页。':info.entries?'已挂载 '+info.entries+' 个批量清理入口。':info.onlineCandidates+info.offlineCandidates?'找到了历史窗口，暂未确认所属会话。未开放清理。':'请先返回聊天，打开搜索聊天记录或线下历史记录。';};
+    el.append(h,version,p,q,s,button,status);
+  }}]});
 }
 
 installHistoryCleaner();
