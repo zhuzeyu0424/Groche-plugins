@@ -1,15 +1,17 @@
-# Roche 记录清理 0.1.0
+# Roche 记录清理 0.1.1
 
-[安装地址](https://raw.githubusercontent.com/zhuzeyu0424/Groche-plugins/main/history-cleaner/plugin.json?v=0.1.0)
+[安装地址](https://raw.githubusercontent.com/zhuzeyu0424/Groche-plugins/main/history-cleaner/plugin.json?v=0.1.1)
 
 在 Roche「插件 App 管理」粘贴安装地址。首次安装后刷新 Roche。
 
 ## 入口
 
-- 线上私聊或群聊：打开当前聊天的「搜索聊天记录」，点击「批量清理」。
-- 线下：打开「历史记录」，点击「批量清理」。
+- 线上私聊或群聊：打开当前聊天的「搜索聊天记录」，搜索框下方点击「批量清理」。展开日历时，按钮仍在日历上方。
+- 线下：打开「历史记录」，标题下方点击「批量清理」。
 
-入口读取当前窗口的真实会话 ID，同名角色互不混用。插件桌面入口仅提供使用说明。
+入口读取当前窗口的真实会话 ID，同名角色互不混用。插件桌面入口提供使用说明和「检查入口」。
+
+0.1.1 修复正式网页没有开发环境组件标记时两个按钮都不出现的问题。使用 Roche 当前生产 Vue 的真实组件树确认所属会话，不依赖角色名称或全局最近会话。
 
 ## 使用
 
