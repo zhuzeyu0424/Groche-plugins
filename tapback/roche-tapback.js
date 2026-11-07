@@ -1,4 +1,4 @@
-/* Roche 气泡贴表情 0.5.6. Native menu + character reactions; no extra AI calls or chat writes. */
+/* Roche 气泡贴表情 0.5.7. Native menu + character reactions; no extra AI calls or chat writes. */
 (() => {
   'use strict';
   if (!window.RochePlugin?.register) throw new Error('请在 Roche 插件管理里安装。');
@@ -356,7 +356,7 @@
   ui.querySelector('.corner').onclick=()=>{if(!selected)return;selected.corner=selected.corner==='left'?'right':'left';const r=read(selected.id);if(r){save(selected,{...r,corner:selected.corner});close();}else toast('下一个表情会贴在'+(selected.corner==='left'?'左':'右')+'上角');};
   ui.querySelector('.native').onclick=()=>{const info=selected;close();if(!info?.target.isConnected)return;const r=info.target.getBoundingClientRect();info.target.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,view:window,clientX:r.left+r.width/2,clientY:r.top+r.height/2}));};
   // Fit to the actual painted corner. Reserve space only when a neighbour is hit.
-  const BADGE_WIDTH=30,BADGE_HEIGHT=110/3,CIRCLE_RADIUS=40/3;
+  const BADGE_WIDTH=36,BADGE_HEIGHT=44,CIRCLE_RADIUS=16;
   const edgeResize=typeof ResizeObserver==='function'?new ResizeObserver(schedule):null;
   const watchedEdges=new Map();
   function watchEdge(el){if(!el||!edgeResize)return;const count=watchedEdges.get(el)||0;if(!count)edgeResize.observe(el);watchedEdges.set(el,count+1);}
@@ -423,7 +423,7 @@
   }
   function badgeShapes(cx,cy,corner,sx,sy){
     const sign=corner==='left'?-1:1;
-    return [{cx,cy,rx:CIRCLE_RADIUS*sx,ry:CIRCLE_RADIUS*sy},{cx:cx+sign*10*sx,cy:cy+35/3*sy,rx:25/6*sx,ry:25/6*sy},{cx:cx+sign*85/6*sx,cy:cy+20*sy,rx:25/12*sx,ry:25/12*sy}];
+    return [{cx,cy,rx:CIRCLE_RADIUS*sx,ry:CIRCLE_RADIUS*sy},{cx:cx+sign*12*sx,cy:cy+14*sy,rx:5*sx,ry:5*sy},{cx:cx+sign*17*sx,cy:cy+24*sy,rx:2.5*sx,ry:2.5*sy}];
   }
   function shapeHits(shape,rect,gap=1){
     const dx=Math.max(rect.left-shape.cx,0,shape.cx-rect.right)/(shape.rx+gap),dy=Math.max(rect.top-shape.cy,0,shape.cy-rect.bottom)/(shape.ry+gap);
@@ -431,12 +431,13 @@
   }
   function solveCorner(surface,corner,sx,sy,rects){
     const v=window.visualViewport,min=(v?.offsetLeft||0)+3,max=min+(v?.width||innerWidth)-6;
-    const centerOffset=corner==='left'?50/3:40/3,edge=corner==='left'?surface.left:surface.right,sign=corner==='left'?1:-1;
+    const centerOffset=corner==='left'?20:16,edge=corner==='left'?surface.left:surface.right,sign=corner==='left'?1:-1;
+    const idealInset=Math.min(centerOffset+7,Math.max(7,(surface.right-surface.left)/(2*sx)));
     let best=null;
-    for(const inset of [7,3,0,-4,-8,11,15,19,23]){
+    for(const inset of [idealInset,idealInset-4,idealInset+4,idealInset-8,idealInset+8,15,14,13.5,13,12.5,12,11,7,3,0,-4,-8]){
       const idealX=edge+sign*inset*sx;
       const cx=Math.max(min+centerOffset*sx,Math.min(max-(BADGE_WIDTH-centerOffset)*sx,idealX));
-      let cy=surface.top-6*sy;
+      let cy=surface.top-7*sy;
       for(let i=0;i<12;i++){
         let next=cy;for(const shape of badgeShapes(cx,cy,corner,sx,sy))for(const r of rects)if(shapeHits(shape,r)){
           const dx=Math.max(r.left-shape.cx,0,shape.cx-r.right),rx=shape.rx+1;
@@ -445,7 +446,8 @@
         }
         if(cy-next<.05)break;cy=next;
       }
-      const score=Math.abs(cx-(edge+sign*7*sx))*.6+Math.abs(cy-(surface.top-6*sy))*1.8;
+      const detached=Math.max(0,surface.top-cy-CIRCLE_RADIUS*sy);
+      const score=Math.abs(cx-(edge+sign*idealInset*sx))*.6+Math.abs(cy-(surface.top-7*sy))*1.8+detached*3;
       if(!best||score<best.score)best={cx,cy,score};
     }
     return best;
@@ -484,11 +486,44 @@
       b.spacer.style.setProperty('height',(extra/sy)+'px','important');space=b.spacer.getBoundingClientRect();surface=surfaceRect(target);
       pose=solveCorner(surface,corner,sx,sy,obstacleRects(b.owner));
     }
-    const centerOffset=corner==='left'?50/3:40/3;
+    const centerOffset=corner==='left'?20:16;
     const x=(pose.cx-space.left)/sx-centerOffset,y=(pose.cy-space.top)/sy-CIRCLE_RADIUS;
     for(const [key,value]of Object.entries({left:x+'px',top:y+'px',right:'auto'}))if(b.host.style.getPropertyValue(key)!==value)b.host.style.setProperty(key,value,'important');
     b.host.dataset.placement='adaptive';b.host.dataset.clearance=String(Math.round(extra/sy*10)/10);
     return true;
+  }
+  // Fit the visible platform emoji, not its font line box, into the old 32px
+  // circle. This also handles systems that split a joined emoji into glyphs.
+  const glyphImages=new Map(),glyphScratch=node('canvas');
+  function badgeGlyphImage(emoji,ratio){
+    const key=emoji+'@'+ratio;
+    if(glyphImages.has(key)){const image=glyphImages.get(key);glyphImages.delete(key);glyphImages.set(key,image);return image;}
+    glyphScratch.width=glyphScratch.height=80*ratio;
+    const ctx=glyphScratch.getContext('2d',{willReadFrequently:true});if(!ctx)throw Error('No emoji canvas');
+    ctx.font=(20*ratio)+"px 'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif";
+    ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillText(emoji,40*ratio,50*ratio);
+    const pixels=ctx.getImageData(0,0,glyphScratch.width,glyphScratch.height),data=pixels.data;
+    let left=pixels.width,top=pixels.height,right=-1,bottom=-1;
+    for(let y=0;y<pixels.height;y++)for(let x=0;x<pixels.width;x++)if(data[(y*pixels.width+x)*4+3]>8){left=Math.min(left,x);right=Math.max(right,x);top=Math.min(top,y);bottom=Math.max(bottom,y);}
+    if(right<left||bottom<top)throw Error('Empty emoji');
+    const width=right-left+1,height=bottom-top+1,cx=(left+right+1)/2,cy=(top+bottom+1)/2;
+    let radius=0;
+    for(let y=top;y<=bottom;y++)for(let x=left;x<=right;x++)if(data[(y*pixels.width+x)*4+3]>8)radius=Math.max(radius,Math.hypot(x+.5-cx,y+.5-cy)+.71);
+    const scale=Math.min(1,24*ratio/width,24*ratio/height,13.5*ratio/radius);
+    const image=node('canvas');image.width=image.height=32*ratio;
+    image.getContext('2d').drawImage(glyphScratch,left,top,width,height,16*ratio-width*scale/2,16*ratio-height*scale/2,width*scale,height*scale);
+    glyphImages.set(key,image);if(glyphImages.size>64)glyphImages.delete(glyphImages.keys().next().value);
+    return image;
+  }
+  function renderBadgeGlyph(glyph,emoji){
+    const ratio=Math.max(1,Math.min(3,Math.ceil(window.devicePixelRatio||1)));
+    if(glyph.dataset.emoji===emoji&&glyph.dataset.ratio===String(ratio))return;
+    try{
+      const image=badgeGlyphImage(emoji,ratio),canvas=node('canvas'),label=node('span',emoji);
+      canvas.width=image.width;canvas.height=image.height;canvas.getContext('2d').drawImage(image,0,0);
+      label.className='glyph-label';glyph.replaceChildren(canvas,label);
+    }catch(_){glyph.textContent=emoji;}
+    glyph.dataset.emoji=emoji;glyph.dataset.ratio=String(ratio);
   }
   // Sample the reaction author's side, never the message receiving the reaction.
   function reactionPalette(area,side){
@@ -545,9 +580,9 @@
         if(b&&(!b.spacer?.contains(b.host)||!b.spacer.isConnected||b.spacer.parentElement!==b.anchor.parentElement||b.owner!==t.closest('[id^="msg-"]'))){removeBinding(t,b);b=null;}
         if(!b){
           const host=node('span');host.dataset.rocheTapback='badge';
-          host.style.cssText='position:absolute!important;z-index:5!important;width:30px!important;height:36.666667px!important;display:block!important;pointer-events:auto!important;line-height:1!important;';
+          host.style.cssText='position:absolute!important;z-index:5!important;width:36px!important;height:44px!important;display:block!important;pointer-events:auto!important;line-height:1!important;';
           const root=host.attachShadow({mode:'open'});
-          root.innerHTML=`<style>:host{all:initial}button{position:relative;isolation:isolate;box-sizing:border-box;display:block;width:30px;height:36.666667px;margin:0;padding:0;border:0;background:transparent;color:var(--rtb-ink,#fff);cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent;filter:drop-shadow(0 .5px .6px #0003)}.glyph{position:absolute;top:0;left:0;box-sizing:border-box;display:grid;place-items:center;width:26.666667px;height:26.666667px;margin:0;padding:0;border:0;font:18px/1 'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif;letter-spacing:0;white-space:nowrap;pointer-events:none}button::before{content:"";position:absolute;inset:0;z-index:-1;background-color:var(--rtb-bg,#0a84ff);background-image:var(--rtb-image,none);background-size:100% 100%;-webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2036%2044%27%3E%3Ccircle%20cx%3D%2716%27%20cy%3D%2716%27%20r%3D%2716%27%2F%3E%3Ccircle%20cx%3D%2728%27%20cy%3D%2730%27%20r%3D%275%27%2F%3E%3Ccircle%20cx%3D%2733%27%20cy%3D%2740%27%20r%3D%272.5%27%2F%3E%3C%2Fsvg%3E") center/100% 100% no-repeat;mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2036%2044%27%3E%3Ccircle%20cx%3D%2716%27%20cy%3D%2716%27%20r%3D%2716%27%2F%3E%3Ccircle%20cx%3D%2728%27%20cy%3D%2730%27%20r%3D%275%27%2F%3E%3Ccircle%20cx%3D%2733%27%20cy%3D%2740%27%20r%3D%272.5%27%2F%3E%3C%2Fsvg%3E") center/100% 100% no-repeat}:host([data-corner=left]) button::before{transform:scaleX(-1)}:host([data-corner=left]) .glyph{left:3.333333px}button:focus-visible{outline:2px solid var(--rtb-ink,#827060);outline-offset:3px;border-radius:50%}@media(prefers-reduced-motion:no-preference){button{animation:pop .23s ease-out}@keyframes pop{0%{transform:scale(.6) rotate(-9deg)}70%{transform:scale(1.12)}100%{transform:scale(1)}}}</style><button type="button"><span class="glyph" aria-hidden="true"></span></button>`;
+          root.innerHTML=`<style>:host{all:initial;-webkit-text-size-adjust:none;text-size-adjust:none}button{position:relative;isolation:isolate;box-sizing:border-box;display:block;width:36px;height:44px;margin:0;padding:0;border:0;background:transparent;color:var(--rtb-ink,#fff);cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent;filter:drop-shadow(0 .5px .6px #0003)}.glyph{position:absolute;top:0;left:0;box-sizing:border-box;display:grid;place-items:center;width:32px;height:32px;margin:0;padding:0;border:0;font:20px/1 'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif;letter-spacing:0;white-space:nowrap;pointer-events:none;overflow:hidden;border-radius:50%;-webkit-text-size-adjust:none;text-size-adjust:none}.glyph canvas{display:block;width:32px;height:32px;margin:0;padding:0;border:0}.glyph-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);font-size:0;opacity:0}button::before{content:"";position:absolute;inset:0;z-index:-1;background-color:var(--rtb-bg,#0a84ff);background-image:var(--rtb-image,none);background-size:100% 100%;-webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2036%2044%27%3E%3Ccircle%20cx%3D%2716%27%20cy%3D%2716%27%20r%3D%2716%27%2F%3E%3Ccircle%20cx%3D%2728%27%20cy%3D%2730%27%20r%3D%275%27%2F%3E%3Ccircle%20cx%3D%2733%27%20cy%3D%2740%27%20r%3D%272.5%27%2F%3E%3C%2Fsvg%3E") center/100% 100% no-repeat;mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2036%2044%27%3E%3Ccircle%20cx%3D%2716%27%20cy%3D%2716%27%20r%3D%2716%27%2F%3E%3Ccircle%20cx%3D%2728%27%20cy%3D%2730%27%20r%3D%275%27%2F%3E%3Ccircle%20cx%3D%2733%27%20cy%3D%2740%27%20r%3D%272.5%27%2F%3E%3C%2Fsvg%3E") center/100% 100% no-repeat}:host([data-corner=left]) button::before{transform:scaleX(-1)}:host([data-corner=left]) .glyph{left:4px}button:focus-visible{outline:2px solid var(--rtb-ink,#827060);outline-offset:3px;border-radius:50%}@media(prefers-reduced-motion:no-preference){button{animation:pop .23s ease-out}@keyframes pop{0%{transform:scale(.6) rotate(-9deg)}70%{transform:scale(1.12)}100%{transform:scale(1)}}}</style><button type="button"><span class="glyph" aria-hidden="true"></span></button>`;
           const button=root.querySelector('button');button.onclick=e=>{e.stopPropagation();open(identify(t));};
           for(const event of['pointerdown','touchstart','touchend','contextmenu'])host.addEventListener(event,e=>e.stopPropagation());
           const layout=makeEdgeSpace(t,host);if(!layout){host.remove();continue;}
@@ -559,7 +594,7 @@
         for(const [name,value]of Object.entries({'--rtb-bg':palette.color,'--rtb-image':palette.image,'--rtb-ink':palette.ink}))if(b.host.style.getPropertyValue(name)!==value)b.host.style.setProperty(name,value);
         if(b.host.dataset.corner!==r.corner)b.host.dataset.corner=r.corner;
         const glyph=b.button.querySelector('.glyph');
-        if(glyph.textContent!==r.emoji)glyph.textContent=r.emoji;
+        renderBadgeGlyph(glyph,r.emoji);
         b.button.setAttribute('aria-label',(r.actor==='character'?'角色贴的 ':'你贴的 ')+r.emoji+'，点击更换或移除');
         b.host.style.visibility=placeEdge(t,b,r.corner,areaOwners.get(area)||[],edgeObstacles)?'visible':'hidden';
       }
@@ -929,7 +964,7 @@ function rocheFetchCoordinator(){
   const characterReactions=createCharacterReactions();
   function mount(container,api){
     panels.get(container)?.();const host=node('div');container.append(host);const root=host.attachShadow({mode:'open'});
-    root.innerHTML=`<style>:host{display:block;padding:22px;color:#302d27;background:#faf9f6;font:15px/1.7 -apple-system,BlinkMacSystemFont,sans-serif;min-height:100%;box-sizing:border-box}h2{margin:8px 0}button{font:inherit;border:0;border-radius:12px;background:#e8e3db;color:#302d27;padding:10px 15px;margin:4px 6px 4px 0}p{max-width:500px}.note{color:#777;font-size:13px}</style><button class="back">返回</button><h2>气泡贴表情 · 0.5.6</h2><p>长按文字或语音气泡，在原菜单里点“贴表情”。${EMOJI.length} 个表情，可按分类挑选或搜索。表情随气泡边角定位，自动避开文字。点表情可更换、移除或换边。</p><button class="toggle"></button><button class="character-toggle"></button><p class="character-state"></p><button class="export">导出表情</button><button class="import">导入表情</button><input type="file" accept="application/json,.json" hidden><p class="note">表情保存在当前浏览器。角色贴表情开启时，会随正常线上私聊发送少量近期消息及表情上下文；不额外请求 AI，不改写原消息。角色贴完后至少隔两轮再贴；明确让角色贴表情时可例外，手动贴不受影响。暂不支持后台托管、群聊或通话。换设备前单独导出。停用或卸载后请刷新 Roche。</p><p class="status" role="status"></p>`;
+    root.innerHTML=`<style>:host{display:block;padding:22px;color:#302d27;background:#faf9f6;font:15px/1.7 -apple-system,BlinkMacSystemFont,sans-serif;min-height:100%;box-sizing:border-box}h2{margin:8px 0}button{font:inherit;border:0;border-radius:12px;background:#e8e3db;color:#302d27;padding:10px 15px;margin:4px 6px 4px 0}p{max-width:500px}.note{color:#777;font-size:13px}</style><button class="back">返回</button><h2>气泡贴表情 · 0.5.7</h2><p>长按文字或语音气泡，在原菜单里点“贴表情”。${EMOJI.length} 个表情，可按分类挑选或搜索。表情随气泡边角定位，自动避开文字。点表情可更换、移除或换边。</p><button class="toggle"></button><button class="character-toggle"></button><p class="character-state"></p><button class="export">导出表情</button><button class="import">导入表情</button><input type="file" accept="application/json,.json" hidden><p class="note">表情保存在当前浏览器。角色贴表情开启时，会随正常线上私聊发送少量近期消息及表情上下文；不额外请求 AI，不改写原消息。角色贴完后至少隔两轮再贴；明确让角色贴表情时可例外，手动贴不受影响。暂不支持后台托管、群聊或通话。换设备前单独导出。停用或卸载后请刷新 Roche。</p><p class="status" role="status"></p>`;
     const toggle=root.querySelector('.toggle'),status=root.querySelector('.status');
     const label=()=>toggle.textContent=enabled?'已开启 · 点击关闭':'已关闭 · 点击开启';label();
     const charToggle=root.querySelector('.character-toggle');
@@ -947,8 +982,8 @@ function rocheFetchCoordinator(){
     }catch(e){status.textContent=e.message;}finally{input.value='';}};
     panels.set(container,()=>{host.remove();panels.delete(container);});
   }
-  function dispose(){if(disposed)return;disposed=true;characterReactions.dispose();clearTimeout(toastTimer);cancelAnimationFrame(scanFrame);observer?.disconnect();themeObserver.disconnect();edgeResize?.disconnect();watchedEdges.clear();listeners.forEach(f=>f());for(const [t,b]of bindings)removeBinding(t,b);for(const b of menuEntries.values())b.remove();menuEntries.clear();for(const clean of [...panels.values()])clean();shell.remove();}
-  window.RochePlugin.register({id:'roche-tapback',name:'气泡贴表情',version:'0.5.6',chat:{scope:{conversationTypes:['direct']},contextProvider:characterReactions.contextProvider},apps:[{id:'roche-tapback-settings',name:'气泡贴表情',icon:'add_reaction',mount,unmount:c=>panels.get(c)?.()}]});
+  function dispose(){if(disposed)return;disposed=true;characterReactions.dispose();clearTimeout(toastTimer);cancelAnimationFrame(scanFrame);observer?.disconnect();themeObserver.disconnect();edgeResize?.disconnect();watchedEdges.clear();glyphImages.clear();glyphScratch.width=glyphScratch.height=0;listeners.forEach(f=>f());for(const [t,b]of bindings)removeBinding(t,b);for(const b of menuEntries.values())b.remove();menuEntries.clear();for(const clean of [...panels.values()])clean();shell.remove();}
+  window.RochePlugin.register({id:'roche-tapback',name:'气泡贴表情',version:'0.5.7',chat:{scope:{conversationTypes:['direct']},contextProvider:characterReactions.contextProvider},apps:[{id:'roche-tapback-settings',name:'气泡贴表情',icon:'add_reaction',mount,unmount:c=>panels.get(c)?.()}]});
   window.__rocheTapbackV1={dispose};scan();
 })();
 
