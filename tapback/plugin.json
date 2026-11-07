@@ -1,7 +1,7 @@
 {
   "id": "roche-tapback",
   "name": "气泡贴表情",
-  "version": "0.5.5",
-  "description": "226 个表情；贴在气泡外侧上角，自动避让正文、译文与相邻消息，跟随美化和尺寸变化。",
-  "entry": "roche-tapback.js?v=0.5.5"
+  "version": "0.5.6",
+  "description": "226 个表情；按实际气泡边角自适应贴合，避开原文、译文和相邻内容，按需调整间距。",
+  "entry": "roche-tapback.js?v=0.5.6"
 }
