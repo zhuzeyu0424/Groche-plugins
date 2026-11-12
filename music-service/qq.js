@@ -14,11 +14,11 @@ function httpsMedia(value) {
 async function qq(route, body, token, env, invoke = handleRequest) {
   if (!env.QQ_SESSION_SECRET || env.QQ_SESSION_SECRET.length < 32)
     throw new QqFailure(503, '请在 Vercel 添加 QQ_SESSION_SECRET（至少 32 位随机字符），然后重新部署音乐服务');
-  async function call(path, args = {}, method = 'GET') {
+  async function call(path, args = {}, method = 'GET', useSession = true) {
     const u = new URL(path, 'https://roche-music.internal');
     if (method === 'GET') u.search = new URLSearchParams(args).toString();
     const r = await invoke(new Request(u, { method,
-      headers: { ...(token ? { 'X-QQ-Session': token } : {}), ...(method === 'POST' ? { 'Content-Type': 'application/json' } : {}) },
+      headers: { ...(token && useSession ? { 'X-QQ-Session': token } : {}), ...(method === 'POST' ? { 'Content-Type': 'application/json' } : {}) },
       ...(method === 'POST' ? { body: JSON.stringify(args) } : {}) }), {
       QQ_SESSION_SECRET: env.QQ_SESSION_SECRET, QQ_SESSION_SECRET_PREVIOUS: env.QQ_SESSION_SECRET_PREVIOUS,
       QQ_PLAYBACK_HINTS_ENABLED: '1', QQ_PTLOGIN_HTTP_ENABLED: '1'
@@ -61,17 +61,23 @@ async function qq(route, body, token, env, invoke = handleRequest) {
   }
   if (route === '/qq/search') {
     const keyword = text(body.query, 60); if (keyword.length < 2) throw new QqFailure(400, '请填写歌名或歌手');
-    const d = await call('/search', { keyword, type: 'song', limit: '12', page: '1' });
+    // The catalog is public. Do not route a keyword search through the logged-in Android branch:
+    // that branch can return an empty list even when the public catalog has matching songs.
+    const d = await call('/search', { keyword, type: 'song', limit: '12', page: '1' }, 'GET', false);
     if (!Array.isArray(d.items)) throw new QqFailure(502, 'QQ 搜索结果格式不正确');
-    return { code: 200, data: d.items.slice(0, 12).flatMap(item => {
+    const songs = d.items.slice(0, 12).flatMap(item => {
+      if (!item || typeof item !== 'object') return [];
       const s = item.songInfo || item; const mid = text(s.mid || s.songmid, 32);
-      if (!ID.test(mid)) return [];
+      const title = text(s.title || s.name || s.songname);
+      if (!ID.test(mid) || !title) return [];
       const album = text(s.album?.mid || s.albummid, 32);
-      return [{ title: text(s.title || s.name || s.songname), artist: (s.singer || []).map(a => text(a.name)).filter(Boolean).join(' / '),
+      return [{ title, artist: (Array.isArray(s.singer) ? s.singer : []).map(a => text(a?.name)).filter(Boolean).join(' / '),
         url: 'https://y.qq.com/n/ryqq/songDetail/' + mid,
         artwork: ID.test(album) ? 'https://y.gtimg.cn/music/photo_new/T002R300x300M000' + album + '.jpg' : '',
         qqMid: mid, qqMedia: text(s.file?.media_mid, 32), verified: true }];
-    }) };
+    });
+    if (d.items.length && !songs.length) throw new QqFailure(502, 'QQ 返回了搜索数据，但歌曲格式无法读取，请更新音乐服务');
+    return { code: 200, data: songs };
   }
   if (route === '/qq/play') {
     if (!token) throw new QqFailure(401, '先在「设置 → QQ 音乐账号」扫码登录');
