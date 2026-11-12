@@ -1,0 +1,15 @@
+{
+  "id": "roche-song-share",
+  "name": "分享歌曲",
+  "version": "0.3.2",
+  "description": "Apple Music 搜索与分享，专辑封面、发现歌曲与卡片配色。",
+  "entry": "roche-song-share.js?v=0.3.2",
+  "permissions": [
+    "conversation:read",
+    "memory:read",
+    "chat:write",
+    "storage",
+    "ui",
+    "network"
+  ]
+}

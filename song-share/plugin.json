@@ -1,9 +1,9 @@
 {
   "id": "roche-song-share",
   "name": "分享歌曲",
-  "version": "0.3.2",
-  "description": "Apple Music 搜索与分享，专辑封面、发现歌曲与卡片配色。",
-  "entry": "roche-song-share.js?v=0.3.2",
+  "version": "0.4.0",
+  "description": "QQ 音乐在线播放、Apple Music 试听与分享，保留专辑封面和卡片配色。",
+  "entry": "releases/0.4.0/roche-song-share.js",
   "permissions": [
     "conversation:read",
     "memory:read",
