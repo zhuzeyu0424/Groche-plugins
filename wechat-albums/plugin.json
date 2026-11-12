@@ -1,0 +1,7 @@
+{
+  "id": "roche-wechat-albums",
+  "name": "微信多图收起",
+  "version": "0.1.0",
+  "description": "连续发送的图片堆叠收起；点开后恢复原图片，保留原生查看。",
+  "entry": "roche-wechat-albums.js?v=0.1.0"
+}
