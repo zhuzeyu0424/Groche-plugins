@@ -1,0 +1,15 @@
+{
+  "id": "roche-song-share",
+  "name": "分享歌曲",
+  "version": "0.4.3",
+  "description": "QQ 音乐扫码账号播放、Apple Music 试听与分享，保留专辑封面和卡片配色。",
+  "entry": "roche-song-share.js",
+  "permissions": [
+    "conversation:read",
+    "memory:read",
+    "chat:write",
+    "storage",
+    "ui",
+    "network"
+  ]
+}

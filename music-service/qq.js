@@ -25,6 +25,8 @@ async function qq(route, body, token, env, invoke = handleRequest) {
     });
     const d = await r.json();
     if (!r.ok) {
+      if (path === '/search' && d.errorKey === 'search.rejected')
+        throw new QqFailure(502, 'QQ 曲库本次拒绝搜索' + (Number.isSafeInteger(d.upstreamCode) ? '（' + d.upstreamCode + '）' : '') + '，未发送卡片；可稍后手动重试');
       const hints = { 401: 'QQ 登录已过期，请重新扫码', 429: 'QQ 请求过于频繁，请稍后再试', 501: '当前服务尚未配置 QQ 登录', 502: 'QQ 音乐暂时无法连接，请稍后再试' };
       throw new QqFailure(r.status, hints[r.status] || 'QQ 音乐请求未完成（' + r.status + '）');
     }
