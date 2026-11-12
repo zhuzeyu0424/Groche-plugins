@@ -1,13 +1,24 @@
-# Roche 私人音乐服务
+# Roche 音乐服务 0.3.0
 
-使用 NeteaseCloudMusicApiEnhanced 4.41.1。仅开放 /search 和 /song/url，免登录可播曲目；不存账号 Cookie，不转发音频文件。
+在原网易云服务上增加 QQ 音乐账号扫码与取链。网页插件通过自己的音乐服务口令访问；不会将账号会话发给公共音乐 API。仅开放搜索、歌曲详情、播放和登录，不提供评论、收藏、发布等账号写操作。
 
-## 部署
-1. Vercel 用 GitHub 登录，导入 zhuzeyu0424/roche-plugins。
-2. Root Directory 设为 music-service，Framework Preset 选 Other。
-3. 环境变量新增 MUSIC_ACCESS_KEY，值设为你自己的随机长口令；不要写入公开仓库。
-4. Deploy。完成后打开域名，应显示 Roche music 和 configured:true。
-5. 在插件音乐源页填写域名及同一个口令。
+## Vercel 更新
 
-请勿在 Vercel 设置网易云账号 Cookie。本版尚未提供账号登录。
-当前验证：本地模拟请求测试。云端联网搜索、音频可用性及手机实际播放仍需部署后验证；不保证所有歌曲可播。
+1. 项目根目录仍选 `music-service`，保留已有 `MUSIC_ACCESS_KEY`。
+2. 在 Settings → Environment Variables 新增 `QQ_SESSION_SECRET`，填写至少 32 位的高强度随机字符。请使用密码管理器生成；不要把值发到聊天、写进 GitHub，或用 QQ 密码。生成后保持不变。
+3. 重新部署。打开服务首页应显示 `version: "0.3.0"` 和 `qqConfigured: true`。
+
+## 手机授权
+
+更新分享歌曲到 0.4.1，打开 设置 → QQ 音乐账号，保存服务地址和原有的服务口令。选择开通会员时所用的 QQ 或微信，扫码并确认。手机上可以保存二维码，再用对应 App 的扫一扫从相册识别；也可以在另一台设备显示二维码。
+
+客户端本机保存加密会话 token。用到音乐时按需续期；最多续到首次授权后的 30 天，之后需重新扫码。退出登录清除本机 token，已签发的 sealed token 不会立刻在服务端撤销。密钥轮换会使旧会话不可用，也可能影响设备身份。
+
+## 已知边界
+
+- QQ 音乐会员不代表每首歌均能在第三方网页播放。歌曲授权、上游接口和 Vercel 网络出口都可能影响取链；错误会明确显示，不自动改成试听、不解密 DRM、不自动换歌。
+- 适配使用非官方开源库 `@yakult-green-tea/qq-music-api` 固定版本 3.3.6，MIT，原作者 Rain120，维护者 yakult-green-tea 等。源码及许可随依赖安装：[项目](https://github.com/yakult-green-tea/qq-music-api)。
+- 服务端不保存明文账号 Cookie，不记录登录 token 或完整音频链接。部署平台处理登录请求，因此服务应由自己管理。
+- 本项目未包含个人密钥或账号。实际会员整曲播放需要用户扫码后验证。
+
+现有网易云 `/search`、`/song/detail`、`/song/url` 保持兼容。
