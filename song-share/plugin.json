@@ -1,9 +1,9 @@
 {
   "id": "roche-song-share",
   "name": "分享歌曲",
-  "version": "0.5.1",
-  "description": "支持编辑附言、原位换歌与卡片恢复；QQ 音乐账号播放和 Apple Music 试听。",
-  "entry": "releases/0.5.1/roche-song-share.js",
+  "version": "0.6.0",
+  "description": "支持一起听、角色切歌与当前歌词；保留歌曲卡片编辑、QQ 账号播放和 Apple Music 试听。",
+  "entry": "releases/0.6.0/roche-song-share.js",
   "permissions": [
     "conversation:read",
     "memory:read",

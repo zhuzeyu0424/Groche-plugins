@@ -89,6 +89,17 @@ async function qq(route, body, token, env, invoke = handleRequest) {
     return { code: 200, data: { qqMid: mid, qqMedia: text(s.file?.media_mid, 32),
       artwork: ID.test(album) ? 'https://y.gtimg.cn/music/photo_new/T002R300x300M000' + album + '.jpg' : '' } };
   }
+  if (route === '/qq/lyrics') {
+    let mid = text(body.mid, 32); if (!ID.test(mid)) throw new QqFailure(400, '歌曲编号无效');
+    if (/^\d+$/.test(mid)) {
+      const detail = await call('/getSongInfo', { songid: mid }, 'GET', false);
+      mid = text(detail.response?.songinfo?.data?.track_info?.mid, 32);
+      if (!ID.test(mid)) throw new QqFailure(422, '这张旧歌曲卡片无法读取歌词，请重新搜索这首歌');
+    }
+    const d = await call('/getLyric', { songmid: mid }, 'GET', false);
+    if (d.response?.code !== 0) throw new QqFailure(502, 'QQ 本次没有返回歌词，可稍后手动重试');
+    return { code: 200, data: { lyric: typeof d.response.lyric === 'string' ? d.response.lyric.slice(0, 80000) : '' } };
+  }
   if (route === '/qq/play') {
     if (!token) throw new QqFailure(401, '先在「设置 → QQ 音乐账号」扫码登录');
     let mid = text(body.mid, 32), media = text(body.media, 32);

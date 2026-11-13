@@ -3,13 +3,13 @@ module.exports=async function(req,res){
 res.setHeader('Access-Control-Allow-Origin','*');res.setHeader('Access-Control-Allow-Methods','GET, POST, OPTIONS');res.setHeader('Access-Control-Allow-Headers','Content-Type, Authorization');res.setHeader('Cache-Control','no-store');
 if(req.method==='OPTIONS')return res.status(204).end();
 const route=new URL(req.url,'https://localhost').pathname;
-if(route==='/'&&req.method==='GET')return res.status(200).json({service:'Roche music',version:'0.3.3',configured:!!process.env.MUSIC_ACCESS_KEY,qqConfigured:(process.env.QQ_SESSION_SECRET||'').length>=32});
+if(route==='/'&&req.method==='GET')return res.status(200).json({service:'Roche music',version:'0.4.0',configured:!!process.env.MUSIC_ACCESS_KEY,qqConfigured:(process.env.QQ_SESSION_SECRET||'').length>=32});
 if(!process.env.MUSIC_ACCESS_KEY)return res.status(503).json({code:503});
 if(req.headers.authorization!=='Bearer '+process.env.MUSIC_ACCESS_KEY)return res.status(401).json({code:401});
 if(req.method!=='POST')return res.status(405).json({code:405});
 let b=req.body||{};try{if(typeof b==='string')b=JSON.parse(b);}catch{return res.status(400).json({code:400});}
 if(route.startsWith('/qq/')){
- if(!['/qq/channels','/qq/qr/start','/qq/qr/check','/qq/qr/cancel','/qq/status','/qq/refresh','/qq/search','/qq/detail','/qq/play'].includes(route))return res.status(404).json({code:404});
+ if(!['/qq/channels','/qq/qr/start','/qq/qr/check','/qq/qr/cancel','/qq/status','/qq/refresh','/qq/search','/qq/detail','/qq/lyrics','/qq/play'].includes(route))return res.status(404).json({code:404});
  if(!b||typeof b!=='object'||Array.isArray(b)||JSON.stringify(b).length>24000)return res.status(400).json({code:400});
  const token=typeof b.session==='string'?b.session:'';if(token.length>16000||/[\r\n]/.test(token))return res.status(400).json({code:400});
  try{return res.status(200).json(await require('./qq').qq(route,b,token,process.env));}
@@ -19,5 +19,6 @@ try{const api=require('@neteasecloudmusicapienhanced/api');let result;
 if(route==='/search'){const keywords=String(b.keywords||'').trim().slice(0,120);if(keywords.length<2)return res.status(400).json({code:400});result=await api.cloudsearch({keywords,limit:20,type:1});}
 else if(route==='/song/detail'){const id=String(b.id||'');if(!/^\d{1,20}$/.test(id))return res.status(400).json({code:400});result=await api.song_detail({ids:id});}
 else if(route==='/song/url'){const id=String(b.id||'');if(!/^\d{1,20}$/.test(id))return res.status(400).json({code:400});result=await api.song_url({id,br:128000});}
+else if(route==='/lyric'){const id=String(b.id||'');if(!/^\d{1,20}$/.test(id))return res.status(400).json({code:400});result=await api.lyric({id});}
 else return res.status(404).json({code:404});return res.status(200).json(result.body);
 }catch{return res.status(502).json({code:502,message:'Music source unavailable'});}};
