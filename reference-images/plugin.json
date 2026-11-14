@@ -1,0 +1,7 @@
+{
+  "id": "roche-reference-plus",
+  "name": "锁脸多图参考",
+  "version": "0.6.0",
+  "description": "人设库保存我的参考，线下跟随当前聊天人设；多角度长相参考、自然表情与体态，服装跟随场景。",
+  "entry": "releases/0.6.0/roche-reference-plus.js"
+}

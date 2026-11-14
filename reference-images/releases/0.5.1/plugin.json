@@ -1,0 +1,7 @@
+{
+  "id": "roche-reference-plus",
+  "name": "锁脸多图参考",
+  "version": "0.5.1",
+  "description": "优先返回图片数据，衔接 Roche 本地保存和 ImgBB；物品风景不附人物参考，保留单次生图与角色绑定检查。",
+  "entry": "roche-reference-plus.js"
+}
