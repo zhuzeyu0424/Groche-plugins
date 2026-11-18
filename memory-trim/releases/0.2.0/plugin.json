@@ -1,0 +1,14 @@
+{
+  "id": "roche-memory-trim",
+  "name": "日常记忆精简",
+  "version": "0.2.0",
+  "description": "本地检查、独立 API 小批量精简、预览后应用；保存任务和可撤销原文，不删除聊天与归档。",
+  "entry": "plugin.js",
+  "permissions": [
+    "conversation:read",
+    "memory:read",
+    "memory:write",
+    "storage",
+    "ui"
+  ]
+}
