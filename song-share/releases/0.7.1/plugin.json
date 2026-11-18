@@ -1,0 +1,15 @@
+{
+  "id": "roche-song-share",
+  "name": "分享歌曲",
+  "version": "0.7.1",
+  "description": "支持一起听、角色切歌与当前歌词；保留歌曲卡片编辑、QQ 账号播放和 Apple Music 站内播放器。",
+  "entry": "roche-song-share.js",
+  "permissions": [
+    "conversation:read",
+    "memory:read",
+    "chat:write",
+    "storage",
+    "ui",
+    "network"
+  ]
+}
