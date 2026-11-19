@@ -1,0 +1,15 @@
+{
+  "id": "roche-song-share",
+  "name": "分享歌曲",
+  "version": "0.8.0",
+  "description": "黑白播放器，三来源搜索、本机收藏、待播队列与角色歌单。",
+  "entry": "roche-song-share.js",
+  "permissions": [
+    "conversation:read",
+    "memory:read",
+    "chat:write",
+    "storage",
+    "ui",
+    "network"
+  ]
+}
