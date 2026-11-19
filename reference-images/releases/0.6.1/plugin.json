@@ -1,0 +1,7 @@
+{
+  "id": "roche-reference-plus",
+  "name": "锁脸多图参考",
+  "version": "0.6.1",
+  "description": "群聊与角色相册按画面人物匹配参考；人设库保存我的参考，线下跟随当前聊天人设。",
+  "entry": "roche-reference-plus.js"
+}

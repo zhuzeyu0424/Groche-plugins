@@ -1,4 +1,4 @@
-/* Roche reference enhancement 0.6.0 */
+/* Roche reference enhancement 0.6.1 */
 (()=>{
 // Shared by these two plugins. One entry point, removable handlers, no polling
 // and no reassignment after asynchronous initialization.
@@ -510,18 +510,26 @@ function referenceSceneCast(raw) {
   return {scene,cast};
 }
 
-async function referenceAnnotateOfflineRequest(input,init){
+const referenceGroupCastInstruction='[ROCHE_REFERENCE_GROUP_V1] 保留原 [图片] 格式。冒号前仍写实际发图的群成员姓名，冒号后的英文画面提示词请保留每个已知出镜人物的原姓名或昵称，尤其是发图人分享其他角色照片时。摄影者和转发者未入镜时不写入画面。风景或物品照不添加人物。';
+
+async function referenceAnnotateOfflineRequest(input,init,group=false){
   const req=input instanceof Request?input:null;
+  if(req&&init?.body===undefined&&!req.headers.get('content-type')?.includes('json'))return null;
   const raw=init?.body===undefined&&req?await req.clone().text():init?.body;
   if(typeof raw!=='string'||raw.length>8*1024*1024)return null;
+  if(group&&!raw.includes('NovelAI Instructions'))return null;
   let data;try{data=JSON.parse(raw);}catch{return null;}
   const text=v=>typeof v==='string'?v:Array.isArray(v)?v.filter(p=>p?.type==='text').map(p=>p.text||'').join('\n'):'';
-  const append=v=>typeof v==='string'?v+'\n\n'+referenceCastInstruction:[...(Array.isArray(v)?v:[]),{type:'text',text:referenceCastInstruction}];
+  const instruction=group?referenceGroupCastInstruction:referenceCastInstruction;
+  const append=v=>typeof v==='string'?v+'\n\n'+instruction:[...(Array.isArray(v)?v:[]),{type:'text',text:instruction}];
   function edit(v,depth=0){
     if(!v||typeof v!=='object'||depth>3)return false;
     if(Array.isArray(v.messages)){
       const systems=[text(v.system),...v.messages.filter(m=>m?.role==='system'||m?.role==='developer').map(m=>text(m.content))];
-      if(!systems.some(s=>s.includes('你正在进行“线下见面模式”'))||!systems.some(s=>s.includes('【图片生成/NovelAI Instructions】'))||systems.some(s=>s.includes('[ROCHE_REFERENCE_CAST_V1]')))return false;
+      if(group){
+        if(!systems.some(s=>s.includes('格式：[图片] 角色真实姓名：(English Prompt)')&&s.includes('【图片生成/NovelAI Instructions】'))||
+          systems.some(s=>s.includes('你正在进行“线下见面模式”')||s.includes('[ROCHE_REFERENCE_GROUP_V1]')))return false;
+      }else if(!systems.some(s=>s.includes('你正在进行“线下见面模式”'))||!systems.some(s=>s.includes('【图片生成/NovelAI Instructions】'))||systems.some(s=>s.includes('[ROCHE_REFERENCE_CAST_V1]')))return false;
       if(v.system!==undefined)v.system=append(v.system);
       else {const instruction=v.messages.find(m=>(m?.role==='system'||m?.role==='developer')&&text(m.content).includes('【图片生成/NovelAI Instructions】'));instruction.content=append(instruction.content);}
       return true;
@@ -750,7 +758,7 @@ async function referenceImageRequest(input,init){
   if(typeof body!=='string'||!body.includes('/images/'))return false;
   try{const data=JSON.parse(body);return typeof data?.url==='string'&&matches(data.url);}catch{return false;}
 }
-function createReferenceNetwork({profiles, native, engine, field, toast, fetchBase, presetLabel,offlineCheck,protect=()=>false,resolveContext}) {
+function createReferenceNetwork({profiles, native, engine, field, toast, fetchBase, presetLabel,offlineCheck,album,annotateGroup,protect=()=>false,resolveContext}) {
   let active = true;
   const pending = new Map();
   const encode = buffer => { const bytes = new Uint8Array(buffer); let text = ''; for (let n=0;n<bytes.length;n+=32768) text += String.fromCharCode(...bytes.subarray(n,n+32768)); return btoa(text); };
@@ -812,7 +820,7 @@ function createReferenceNetwork({profiles, native, engine, field, toast, fetchBa
   }
   async function preparePlain(input,init,prompt){
     const context=resolveContext?.(prompt);
-    if(!context?.profile)return {reason:context?.reason,blocked:context?.blocked,sceneOnly:context?.noIdentity};
+    if(!context?.profile&&!context?.removeTags)return {context,reason:context?.reason,blocked:context?.blocked,sceneOnly:context?.noIdentity};
     const req=input instanceof Request?input:null;
     const headers=new Headers(init?.headers||req?.headers);
     let url=req?.url||String(input),envelope=null;
@@ -824,8 +832,9 @@ function createReferenceNetwork({profiles, native, engine, field, toast, fetchBa
     }
     // Only known GPT-image routes can be converted from JSON generation to image editing.
     // Do not silently rewrite third-party-specific schemas or existing image inputs.
-    if(!/^gpt-image(?:[- .]|$)/i.test(String(data.model||'')))return {reason:'此模型的文字转参考图接口尚未验证',blocked:context.paired};
-    if(Object.keys(data).some(k=>!['model','prompt','size','n','quality','background','output_format','output_compression','moderation','user','response_format'].includes(k)))return {reason:'本次接口包含尚未适配的参数，未转换为多图请求',blocked:context.paired};
+    const unsupported=reason=>context.scoped&&context.noIdentity?{context,sceneOnly:true}:{reason,blocked:context.paired||context.scoped};
+    if(!/^gpt-image(?:[- .]|$)/i.test(String(data.model||'')))return unsupported('此模型的文字转参考图接口尚未验证');
+    if(Object.keys(data).some(k=>!['model','prompt','size','n','quality','background','output_format','output_compression','moderation','user','response_format'].includes(k)))return unsupported('本次接口包含尚未适配的参数，未转换为多图请求');
     const destination=new URL(target,location.href);destination.pathname=destination.pathname.replace(/\/generations\/?$/,'/edits');
     target=destination.href;if(envelope)envelope={...envelope,url:target};else url=target;
     const body=new FormData();for(const [key,value] of Object.entries(data))if(value!=null)body.append(key,String(value));
@@ -840,13 +849,21 @@ function createReferenceNetwork({profiles, native, engine, field, toast, fetchBa
   }
   async function hooked(input, init) {
     if (!active) return fetchBase(input,init);
+    if(album){let catalog;try{catalog=await album.inspect(input,init);}catch{}if(catalog)return album.forward(catalog,fetchBase);}
     if(offlineCheck){let check;try{check=await offlineCheck.inspect(input,init);}catch{}if(check)return offlineCheck.forward(check,input,init,fetchBase);}
+    if(annotateGroup){let prepared;try{prepared=await annotateGroup(input,init);}catch{}if(prepared)return fetchBase(prepared.input,prepared.init);}
     let info;
     try{info=await inspect(input,init);}catch{if(protecting()&&await referenceImageRequest(input,init))return blocked('无法读取本次图片请求的参考图。');return fetchBase(input,init);}
     if(!info){
       let record,prepared;try{record=await observePlain(input,init);if(record)prepared=await preparePlain(input,init,record.prompt);}catch{}
-      if(prepared?.context)info=prepared;
+      if(prepared?.body)info=prepared;
       else {
+        if(record&&prepared?.context?.scoped){
+          record.entity='当前场景';
+          record.mode='无人物参考';
+          record.source=prepared.context.source;
+          record.message=prepared.context.decision||record.message;
+        }
         if(record&&prepared?.reason)record.message+=' '+prepared.reason+'。';
         if(prepared?.blocked||!prepared?.sceneOnly&&protecting()&&await referenceImageRequest(input,init))return blocked(prepared?.reason||'这次请求没有可确认的多图参考。',record?.prompt);
         return passThrough(input,init,record);
@@ -856,15 +873,32 @@ function createReferenceNetwork({profiles, native, engine, field, toast, fetchBa
     const converted=Boolean(info.context),prompt=String(info.body.get('prompt')||'');
     const requestContext=info.context||resolveContext?.(prompt);
     if(!converted){
-      if(requestContext?.paired||requestContext?.noIdentity){if(requestContext.blocked)return blocked(requestContext.reason,prompt);info.context=requestContext;}
+      if(requestContext?.paired||requestContext?.scoped||requestContext?.noIdentity){if(requestContext.blocked)return blocked(requestContext.reason,prompt);info.context=requestContext;}
     }
     const sceneOnly=info.context?.noIdentity===true;
-    if(!converted&&!sceneOnly&&originals.length!==1)return info.context?.paired||protecting()?blocked('原生图片数量不符合当前多图接入方式。',prompt):fetchBase(input,init);
-    const hash=converted||sceneOnly?'':await digest(originals[0]);
+    const scoped=info.context?.scoped===true;
+    if(!converted&&(!sceneOnly||scoped)&&originals.length!==1)return info.context?.paired||scoped||protecting()?blocked('原生图片数量不符合当前多图接入方式。',prompt):fetchBase(input,init);
+    const hash=converted||sceneOnly&&!scoped?'':await digest(originals[0]);
     if(info.context?.paired&&!converted&&!sceneOnly){
       const ctx=info.context;
       const anchors=[ctx.anchorProfile,profiles()[ctx.anchorProfile.pairedPersonaId]];
       if(!anchors.some(p=>{const e=native().entities().find(e=>String(e.id)===String(p?.id));return p?.enabled&&p.boundDigest===hash&&e?.faceLock?.enabled===true&&e.faceLock.libraryItemId===p.libraryId;}))return blocked('原生图片与本对话双方的参考绑定不一致，未替换图片。',prompt);
+    }
+    const nativePrefixFor=p=>['Use the uploaded image as the primary identity and face reference.',
+      'Apply the uploaded identity reference only to '+((p?.handle||p?.name)||'the intended main subject')+'.',
+      'Preserve the same person: facial structure, eye shape, nose, lips, jawline, skin tone, hair identity cues, and distinctive marks.',
+      'If the image contains multiple people, keep all other people visually distinct and do not copy the reference face onto them.',
+      'Follow the written prompt for pose, clothing, scene, lighting, and style, but do not replace the person with a different face.'].join(' ');
+    if(scoped&&!converted){
+      const anchor=info.context.anchorPerson, lock=anchor?.faceLock;
+      const profile=anchor&&profiles()[String(anchor.id)];
+      const image=native().identityImage?.(lock?.libraryItemId);
+      let matches=lock?.libraryItemId&&profile?.libraryId===lock.libraryItemId&&profile.boundDigest===hash;
+      if(!matches&&typeof image==='string'&&/^data:image\/[\w+.-]+;base64,/.test(image)){
+        try{matches=await digest(new Blob([decode(image.slice(image.indexOf(',')+1))]))===hash;}catch{}
+      }
+      if(!matches||lock?.enabled!==true||!prompt.startsWith(nativePrefixFor(anchor)+'\n\n'))
+        return blocked('原生锁脸图与本次发图来源不一致，无法安全替换。',prompt);
     }
     offlineCheck?.noteImage(prompt,'原生锁脸生图请求');
     const all=info.context?[info.context.profile]:Object.values(profiles()).filter(p=>p.enabled&&p.boundDigest===hash);
@@ -872,14 +906,14 @@ function createReferenceNetwork({profiles, native, engine, field, toast, fetchBa
     const candidates=sceneOnly?all:all.filter(p=>{
       const person=native().entities().find(e=>String(e.id)===p.id);
       const hasTarget=prompt.includes('Apply the uploaded identity reference only to ');
-      return person?.faceLock?.enabled!==false && person?.faceLock?.libraryItemId===p.libraryId && (info.context?.paired||!hasTarget||prompt.includes('Apply the uploaded identity reference only to '+(person.handle||person.name)+'.'));
+      return person?.faceLock?.enabled!==false && person?.faceLock?.libraryItemId===p.libraryId && (info.context?.paired||scoped||!hasTarget||prompt.includes('Apply the uploaded identity reference only to '+(person.handle||person.name)+'.'));
     });
     if(candidates.length!==1)return blocked('无法唯一确认这次锁脸对应的角色，请检查角色名称和锁脸绑定。',prompt);
-    const profile=candidates[0], person=native().entities().find(e=>String(e.id)===profile.id);
-    const onlineSingle=requestContext?.channel==='online'&&String(requestContext.profile?.id)===String(profile.id);
+    const profile=candidates[0], person=profile&&native().entities().find(e=>String(e.id)===profile.id);
+    const onlineSingle=requestContext?.channel==='online'&&String(requestContext.profile?.id)===String(profile?.id);
     // A unique native anchor already identifies the character, even if a pending
     // row has not become visible yet. Keep that identity; never infer user from it.
-    const nativeAnchorFallback=!sceneOnly&&profile.pairedPersonaId&&!info.context?.paired&&!onlineSingle;
+    const nativeAnchorFallback=!sceneOnly&&profile.pairedPersonaId&&!info.context?.paired&&!scoped&&!onlineSingle;
 
     if(nativeAnchorFallback){
       const pairedUser=native().entities().find(e=>String(e.id)===String(profile.pairedPersonaId));
@@ -888,18 +922,19 @@ function createReferenceNetwork({profiles, native, engine, field, toast, fetchBa
     }
     // Remove only the exact wrapper generated by this supported Roche build.
     // The user's scene, positive/negative prompts and character instructions remain intact.
-    const nativePrefixFor=p=>['Use the uploaded image as the primary identity and face reference.',
-      'Apply the uploaded identity reference only to '+(p.handle||p.name)+'.',
-      'Preserve the same person: facial structure, eye shape, nose, lips, jawline, skin tone, hair identity cues, and distinctive marks.',
-      'If the image contains multiple people, keep all other people visually distinct and do not copy the reference face onto them.',
-      'Follow the written prompt for pose, clothing, scene, lighting, and style, but do not replace the person with a different face.'].join(' ');
-    const prefixPeople=info.context?.paired?native().entities().filter(e=>[String(info.context.anchorPerson.id),info.context.anchorProfile.pairedPersonaId].includes(String(e.id))):[person];
-    const nativePrefix=prefixPeople.map(nativePrefixFor).find(p=>prompt.startsWith(p+'\n\n'));
-    const scenePrompt=referenceSceneCast(nativePrefix?prompt.slice(nativePrefix.length+2):prompt).scene;
+    const prefixPeople=info.context?.paired?native().entities().filter(e=>[String(info.context.anchorPerson.id),info.context.anchorProfile.pairedPersonaId].includes(String(e.id))):[scoped?info.context.anchorPerson:person];
+    const nativePrefix=prefixPeople.filter(Boolean).map(nativePrefixFor).find(p=>prompt.startsWith(p+'\n\n'));
+    let scenePrompt=referenceSceneCast(nativePrefix?prompt.slice(nativePrefix.length+2):prompt).scene;
+    if(scoped&&info.context.removeTags){
+      const tags=info.context.removeTags.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      const scene=info.context.scene.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      scenePrompt=scenePrompt.replace(new RegExp('(^|, )'+tags+', (?=(?:\\(weather: [^)]*\\), )?'+scene+'(?:, Avoid: |$))'),'$1');
+    }
     const subjects=info.context?.subjects||[{profile,person}];
     const separate=info.context?.paired&&(subjects.length===2||info.context.otherPeople||String(person.id)!==String(info.context.anchorPerson.id));
     let plan;
-    try{plan=sceneOnly?{references:[],prompt:[profile.stylePrompt,info.context.scene].filter(Boolean).join('\n\n')}:separate?engine.planSubjects(info.context.scene,subjects):engine.plan(scenePrompt,{},'',{rocheReferenceProfile:{...profile,identityMode:'always'},faceLockTargetName:person.handle||person.name});}
+    try{plan=sceneOnly?{references:[],prompt:scoped?scenePrompt:[profile.stylePrompt,info.context.scene].filter(Boolean).join('\n\n')}:
+      scoped?engine.planSubjects(scenePrompt,subjects):separate?engine.planSubjects(info.context.scene,subjects):engine.plan(scenePrompt,{},'',{rocheReferenceProfile:{...profile,identityMode:'always'},faceLockTargetName:person.handle||person.name});}
     catch{return blocked('人物参考设置无法读取，请重新保存双方的参考设置。',prompt);}
     if(!plan.references.length&&!sceneOnly)return failure('此角色的参考图为空，已停止生成。');
     let sceneData;
@@ -1069,27 +1104,84 @@ function referencePairForChat(store,chat,profiles){
   if(source==='off'||source==='auto'&&!hasUser||source==='fixed'&&!stored.pairedPersonaId)return null;
   return {character:contact,base:{...stored,id:String(contact.id),pairedPersonaId:String(persona?.id||stored.pairedPersonaId||''),userSource:source},automatic:source==='auto'};
 }
-function resolveReferenceContext(store, finalPrompt, profiles) {
+function referencePromptMatches(text,scene){
+  return scene.length>=2&&(text===scene||text.endsWith(', '+scene)||text.endsWith('\n\n'+scene)||
+    text.startsWith(scene+', Avoid: ')||text.includes(', '+scene+', Avoid: ')||text.includes('\n\n'+scene+', Avoid: '));
+}
+
+function referenceGroup(chat){return chat?.type==='group'||chat?.isGroup===true;}
+
+function resolveScopedReference(store,hit,profiles){
+  const scene=referenceSceneCast(hit.scene).scene;
+  const people=[...(store.contacts||[]),...(store.personas||[])];
+  const anchorPerson=people.find(p=>String(p.id)===hit.id);
+  const overrides=hit.chat?.localSettings?.memberOverrides||{};
+  const names=p=>[...referenceNames(p,profiles),String(overrides[p.id]?.nickname||'').normalize('NFKC').trim()].filter(Boolean);
+  let visible=scene.normalize('NFKC');
+  for(const name of new Set(people.flatMap(names))){
+    const n=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    visible=visible.replace(new RegExp("(?:taken|shot|photographed) by "+n+"(?=$|[^a-z0-9])|"+n+"(?:['’]s)? (?:POV|point of view|behind the camera)|(?:由|让)\\s*"+n+"\\s*(?:拍摄|拍照)",'gi'),' ')
+      .replace(new RegExp("(^|[^a-z0-9])"+n+"(?=\\s+(?:sends?|shares?|posts?)\\s+(?:a|the)\\s+(?:photo|picture|portrait)|\\s*(?:发|发送|分享)(?:给我|了|一张|张))",'gi'),'$1')
+      .replace(new RegExp("(?:without|except|not including) "+n+"(?=$|[^a-z0-9])|"+n+" (?:is not visible|is absent|off.screen)|(?:没有|不含|不包括)\\s*"+n,'gi'),' ')
+      .replace(new RegExp(n+"['’]s (?:hoodie|shirt|jacket|room|bedroom|car|house|phone|camera)\\b",'gi'),' ');
+  }
+  const mentions=people.flatMap(person=>referenceNameMentions(visible,names(person)).map(m=>({...m,person})));
+  const targets=[...new Map(mentions.filter(m=>!mentions.some(o=>o.start<=m.start&&o.end>=m.end&&o.end-o.start>m.end-m.start))
+    .map(({person})=>[String(person.id),person])).values()];
+  const duplicate=mentions.some(m=>targets.includes(m.person)&&mentions.some(o=>o.person!==m.person&&targets.includes(o.person)&&o.start===m.start&&o.end===m.end));
+  const excludesPerson=/\b(no people|no person|no humans|without people|empty scene|landscape only)\b|无人|没有人物|纯风景/i.test(scene);
+  const count=referenceScenePeopleCount(scene);
+  const selfie=/\bselfie\b|自拍/i.test(visible)&&!(/\b(selfie of|group selfie|with friends)\b|合照|合影/i.test(visible)||count.count>1);
+  if(!targets.length&&anchorPerson&&(selfie||hit.album&&/\b(?:the )?album owner\b|相册主人/i.test(visible)))targets.push(anchorPerson);
+  const subjects=[];
+  const base={scoped:true,anchorPerson,scene,source:hit.source,channel:'online'};
+  if(!excludesPerson&&!duplicate&&targets.length<=2&&!count.conflict&&!(count.count!=null&&count.count<targets.length)){
+    for(const person of targets){
+      const profile=profiles[String(person.id)];
+      if(!profile?.enabled)continue;
+      if(!profile.identityImages?.length||person.faceLock?.enabled!==true||person.faceLock.libraryItemId!==profile.libraryId)
+        return {...base,blocked:true,reason:(person.handle||person.name)+' 的参考绑定已改变，请重新保存参考设置'};
+      subjects.push({person,profile});
+    }
+  }
+  const carriesOwner=subjects.some(s=>s.person===anchorPerson);
+  return {...base,subjects,profile:subjects[0]?.profile,person:subjects[0]?.person,noIdentity:!subjects.length,
+    removeTags:hit.album&&!carriesOwner&&Array.isArray(anchorPerson?.tags)?anchorPerson.tags.join(', '):'',
+    decision:subjects.length?'按画面中的 '+subjects.map(s=>s.person.handle||s.person.name).join('、')+' 匹配参考':
+      excludesPerson?'本次为无人画面，使用原生场景生成':'未确认画面中有已绑定参考的角色，使用原生场景生成'};
+}
+
+function resolveReferenceContext(store, finalPrompt, profiles, album) {
   const text=String(finalPrompt||'').trim(), hits=[];
   const entities=[...(store.contacts||[]),...(store.personas||[])];
-  const matches=scene=>scene.length>=4&&(text===scene||text.endsWith(', '+scene)||text.endsWith('\n\n'+scene)||text.includes(', '+scene+', Avoid: '));
+  const matches=scene=>referencePromptMatches(text,scene);
   const named=(scene,name)=>{
     name=String(name||'').trim();if(name.length<2)return false;
     const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
     return new RegExp('(^|[^a-z0-9])'+escaped+'(?=$|[^a-z0-9])','i').test(scene);
   };
   function add(row,id,source,chatId){
-    const scene=String(row.prompt||'').trim();if(!matches(scene))return;
     const sourceChat=String(row.chatId||row.conversationId||chatId||'');
-    if(scene.length<12){const chat=(store.conversations||[]).find(c=>String(c.id)===sourceChat.replace(/^offline_/,''));if(!referencePairForChat(store,chat,profiles))return;}
+    const chat=(store.conversations||[]).find(c=>String(c.id)===sourceChat.replace(/^offline_/,''));
+    const group=referenceGroup(chat)&&source==='聊天待生成图片'&&!sourceChat.startsWith('offline_');
+    const rendering=group&&row.content==='PENDING'&&String(row.text||'').startsWith('[正在绘制] ');
+    // Roche updates the rendering text on retry, while the original timestamp
+    // and saved prompt can still describe the first generation.
+    const scene=String(rendering?row.text.slice('[正在绘制] '.length):row.prompt||'').trim();if(!matches(scene))return;
+    if(scene.length<12&&!rendering&&!referencePairForChat(store,chat,profiles))return;
     // Failed/old records must not claim a new unrelated request.
-    const stamp=Number(row.timestamp);if(!stamp||Date.now()-stamp>10*60*1000||stamp>Date.now()+60000)return;
-    hits.push({row,id:String(id||''),scene,source,chatId:sourceChat,channel:source==='线下待生成图片'||sourceChat.startsWith('offline_')?'offline':'online'});
+    const stamp=Number(row.timestamp);if(!stamp||!rendering&&Date.now()-stamp>10*60*1000||stamp>Date.now()+60000)return;
+    hits.push({row,id:String(id||''),scene,source:group?'群聊生图':source,chatId:sourceChat,chat,group,channel:source==='线下待生成图片'||sourceChat.startsWith('offline_')?'offline':'online'});
   }
   for(const [chatId,rows] of Object.entries(store.offlineGallery||{}))if(Array.isArray(rows))for(const row of rows)
     if(row.status==='pending')add(row,row.faceLockEntityId,'线下待生成图片',chatId);
   for(const [chatId,rows] of Object.entries(store.messages||{}))if(Array.isArray(rows))for(const row of rows)
     if(row.isGenerating===true&&row.type==='image')add(row,row.faceLockEntityId||row.senderId,'聊天待生成图片',chatId);
+  const albumHits=album?.claim(text)||[];
+  if((hits.some(h=>h.group)||albumHits.length)&&Object.values(profiles).some(p=>p.enabled)){
+    if(hits.length+albumHits.length!==1)return {scoped:true,blocked:true,reason:'相同提示词对应多个待生成场景，无法确认本次参考'};
+    return resolveScopedReference(store,hits[0]||albumHits[0],profiles);
+  }
   if(!hits.length)return {reason:'未找到与本次提示词对应的待生成图片记录'};
   const pair=resolvePairedReference(store,hits,profiles);
   if(pair)return pair;
@@ -1204,15 +1296,82 @@ function referenceHistorySnapshot(rows,now=Date.now()) {
   });
 }
 
+// Scene descriptions in a new album exist only inside Roche until the batch
+// finishes. Match the catalog response or the selected photo's generate action.
+function createReferenceAlbum({store,enabled}){
+  const pending=[];
+  const prune=()=>{for(let i=pending.length-1;i>=0;i--)if(pending[i].until<=Date.now())pending.splice(i,1);};
+  function remember(contactId,scenes,ttl){
+    prune();
+    for(const scene of scenes)if(typeof scene==='string'&&scene.trim().length>=4)
+      pending.push({id:String(contactId),scene:scene.trim(),source:'角色相册生图',album:true,until:Date.now()+ttl});
+    if(pending.length>80)pending.splice(0,pending.length-80);
+  }
+  function claim(prompt){
+    prune();
+    const hits=pending.filter(row=>referencePromptMatches(prompt,row.scene));
+    const distinct=hits.filter((hit,i)=>hits.findIndex(row=>row.id===hit.id&&row.scene===hit.scene)===i);
+    for(const hit of distinct)pending.splice(pending.indexOf(hit),1);
+    return distinct;
+  }
+  const asText=v=>typeof v==='string'?v:Array.isArray(v)?v.map(x=>x?.text||'').join('\n'):'';
+  async function inspect(input,init){
+    if(!enabled())return null;
+    const req=input instanceof Request?input:null;
+    if(String(init?.method||req?.method||'GET').toUpperCase()!=='POST')return null;
+    if(req&&init?.body===undefined&&!req.headers.get('content-type')?.includes('json'))return null;
+    const raw=init?.body===undefined&&req?await req.clone().text():init?.body;
+    if(typeof raw!=='string'||!raw.includes('私人相册数据')||raw.length>8*1024*1024)return null;
+    const envelope=JSON.parse(raw);
+    const wrapped=typeof envelope.url==='string'&&envelope.body!=null;
+    if(wrapped&&envelope.bodyEncoding==='base64')return null; // Roche sends catalog JSON as text.
+    const data=wrapped?(typeof envelope.body==='string'?JSON.parse(envelope.body):envelope.body):envelope;
+    const message=data.messages?.find(m=>m.role==='system');
+    const system=message?.content??data.system??data.systemInstruction?.parts;
+    const text=asText(system);
+    const name=text.match(/^你正在生成角色 "([^"\r\n]+)" 的私人相册数据。\n角色设定:/)?.[1];
+    if(!name||!text.includes('[PHOTOS]')||!text.includes('Scene: <极其详细的英文画面视觉描述'))return null;
+    const {contacts,conversations}=store();
+    const owners=(contacts||[]).filter(c=>(c.name||(conversations||[]).find(chat=>chat.id===c.id)?.handle)===name);
+    if(owners.length!==1)return null;
+    const instruction='\n\n每张 Scene 请用姓名或称呼指明画面中确实看得见、能辨认的已知人物。相册主人、拍摄者或回忆里提到的人未出镜时，不要把其名字写成画面人物。风景和物品不加人物。保留原 Scene 格式。';
+    const append=v=>typeof v==='string'?v+instruction:[...v,{...(v[0]?.type?{type:'text'}:{}),text:instruction}];
+    if(message)message.content=append(system);
+    else if(data.system!==undefined)data.system=append(system);
+    else data.systemInstruction.parts=append(system);
+    if(wrapped)envelope.body=typeof envelope.body==='string'?JSON.stringify(data):data;
+    const headers=new Headers(init?.headers||req?.headers);
+    headers.delete('content-length');
+    const next={...init,headers,body:JSON.stringify(envelope)};
+    return {id:owners[0].id,input:req?new Request(req,next):input,init:req?undefined:next};
+  }
+  async function forward(catalog,fetchBase){
+    const response=await fetchBase(catalog.input,catalog.init);
+    if(response.ok)try{
+      const result=await response.clone().json();
+      const raw=asText(result.choices?.[0]?.message?.content??result.candidates?.[0]?.content?.parts??result.content);
+      const photos=raw.match(/\[PHOTOS\]([\s\S]*?)(?=\[|$)/i)?.[1];
+      if(photos)remember(catalog.id,photos.split('---').slice(0,16).map(block=>{
+        const scene=block.match(/^[^a-zA-Z0-9\r\n]*Scene\**\s*[:：][ \t]*([^\r\n]*(?:\r?\n(?![^a-zA-Z0-9\r\n]*(?:Scene|Text|Date)\**\s*[:：])[^\r\n]*)*)/im)?.[1];
+        return scene?.split(/\r?\n/).map(line=>line.trim()).filter(Boolean).join('\n').replace(/\*\*/g,'');
+      }),45*60*1000);
+    }catch{}
+    return response;
+  }
+  return {claim,inspect,forward,remember};
+}
+
 /* Embedded enhancement for the account-login Roche builds checked on 2026-10-18. */
 (() => {
   'use strict';
   if (!window.RochePlugin?.register) throw Error('请在 Roche 插件管理中安装。');
   window.__rocheReferencePlugin?.dispose();
-  const ID='roche-reference-plus', VERSION='0.6.0';
+  const ID='roche-reference-plus', VERSION='0.6.1';
   let disposed=false, db, runtime, loading, ui, engine, presets, hook, observer, frame=0, api, field='image', resultMode='embedded', noticeTimer;
   const presetRows=new Map();
   const records=new Map(), inserted=new Set(), mounts=new Map();
+  const hasProfiles=()=>[...records.values()].some(p=>p.enabled);
+  const album=createReferenceAlbum({store:()=>runtime.store,enabled:hasProfiles});
   const coordinator=rocheFetchCoordinator();
   let previousFetch,protection=true;
   const startupRecords=[];
@@ -1316,7 +1475,7 @@ function referenceHistorySnapshot(rows,now=Date.now()) {
         persistHistory:rows=>{if(disposed)return;const snapshot=referenceHistorySnapshot(rows);historyWrite=historyWrite.then(()=>storage('put','history',snapshot)).catch(()=>{});},
         exportPresetLibraries:()=>presets.exportLibraries(),preparePresetImport:groups=>presets.prepareImport(groups,new Set(entities().map(e=>String(e.id)))),importPresetLibraries:groups=>presets.importPrepared(groups)});
       presets=createRocheReferencePresets({cleanProfile:engine.cleanProfile,initial:[...presetRows],persist:(id,items)=>storage('put','presets:'+id,items)});
-      hook=createReferenceNetwork({protect:()=>protection,resolveContext:prompt=>resolveReferenceContext(runtime.store,prompt,Object.fromEntries(records)),profiles:()=>Object.fromEntries(records),native:()=>({entities}),engine,offlineCheck:createOfflineImageCheck({report:row=>engine.report(row),prepareRequest:(input,init)=>[...records.values()].some(p=>p.enabled&&(p.pairedPersonaId||runtime.store.personas.some(u=>String(u.id)===p.id)))?referenceAnnotateOfflineRequest(input,init):null}),presetLabel:profile=>{const snapshot=JSON.stringify(engine.cleanProfile(profile));const matches=presets.list(profile.id).filter(item=>JSON.stringify(item.profile)===snapshot);return matches.length?matches.map(item=>item.name).join(' / '):'自定义参考设置';},field:()=>field,toast,fetchBase:createReferenceResultTransport({fetchBase:previousFetch,mode:()=>resultMode,notify:toast})});
+      hook=createReferenceNetwork({album,annotateGroup:(input,init)=>hasProfiles()?referenceAnnotateOfflineRequest(input,init,true):null,protect:()=>protection,resolveContext:prompt=>resolveReferenceContext(runtime.store,prompt,Object.fromEntries(records),album),profiles:()=>Object.fromEntries(records),native:()=>({entities,identityImage:id=>runtime.store.faceLockLibrary.find(item=>item.id===id)?.image}),engine,offlineCheck:createOfflineImageCheck({report:row=>engine.report(row),prepareRequest:(input,init)=>[...records.values()].some(p=>p.enabled&&(p.pairedPersonaId||runtime.store.personas.some(u=>String(u.id)===p.id)))?referenceAnnotateOfflineRequest(input,init):null}),presetLabel:profile=>{const snapshot=JSON.stringify(engine.cleanProfile(profile));const matches=presets.list(profile.id).filter(item=>JSON.stringify(item.profile)===snapshot);return matches.length?matches.map(item=>item.name).join(' / '):'自定义参考设置';},field:()=>field,toast,fetchBase:createReferenceResultTransport({fetchBase:previousFetch,mode:()=>resultMode,notify:toast})});
       for(const row of startupRecords.splice(0))engine.report(row);
       ui=createRocheReferenceUI(engine,{pluginMode:true,protection:()=>protection,saveProtection:async value=>{await storage('put','protection',value);protection=value;},connectionStatus:()=>coordinator.status().entryUnchanged?'插件已连接本页请求入口；仍以每次生成记录为准。':'页面请求入口已变化，是否兼容尚未确认。请刷新 Roche 后重新打开本面板。',presets,bindingStatus:id=>{const profile=records.get(String(id));if(!profile?.enabled)return '';const person=entities().find(e=>String(e.id)===String(id));return person?.faceLock?.enabled!==false&&person?.faceLock?.libraryItemId===profile.libraryId?'原生锁脸绑定正常；是否提交多图请查看生成记录。':'原生锁脸绑定已改变，请点击「套用并保存」或「保存参考设置」重新绑定。';},legacyImage:id=>{const p=entities().find(e=>String(e.id)===String(id));return runtime.store.faceLockLibrary.find(x=>x.id===p?.faceLock?.libraryItemId)?.image||'';},resultMode:()=>resultMode,saveResultMode:async value=>{await storage('put','resultMode',value);resultMode=value;},saveField:async value=>{await storage('put','field',value);field=value;}});
       scan();
@@ -1350,6 +1509,18 @@ function referenceHistorySnapshot(rows,now=Date.now()) {
       }
     }return null;
   }
+  function noteAlbumGenerate(event){
+    if(!runtime||!event.isTrusted||!(event.target instanceof Element))return;
+    const target=event.target.closest('button, .cursor-pointer');
+    if(!target||target.disabled||![...target.querySelectorAll('.material-symbols-outlined')]
+      .some(icon=>['refresh','magic_button'].includes(icon.textContent.trim())))return;
+    for(let vm=instanceAt(target);vm;vm=vm.parent){
+      if((vm.type?.__name||vm.type?.name)!=='GalleryDetail')continue;
+      const {contactId,photo}=vm.props?.params||{};
+      if(photo?.id&&runtime.store.contacts.some(p=>p.id===contactId))album.remember(contactId,[photo.sceneDescription],2*60*1000);
+      break;
+    }
+  }
   function scan(){
     if(disposed)return;for(const button of inserted)if(!button.isConnected)inserted.delete(button);
     for(const label of document.querySelectorAll('h3,p,span,div')){
@@ -1368,14 +1539,15 @@ function referenceHistorySnapshot(rows,now=Date.now()) {
     const title=document.createElement('h2');title.textContent='锁脸多图参考 · '+VERSION;
     const help=document.createElement('p');help.textContent='角色从「锁脸」进入，我的参考从「人设库 → 编辑人设 → 人设描述」进入。每人最多 4 张人物图。';
     const button=document.createElement('button');button.textContent='管理人物与画风参考';button.onclick=()=>open();
-    const note=document.createElement('p');note.textContent='线下自动读取该聊天正在使用的人设；线上继续使用角色参考。实际提交张数可在「生成记录」核对。仅增强当前页面经过的 OAI 生图请求。';
+    const note=document.createElement('p');note.textContent='线下读取当前聊天人设，群聊和角色相册按画面中的人物匹配参考。实际提交张数可在「生成记录」核对。支持当前页面的 OAI 生图。';
     const status=document.createElement('p');status.textContent='正在检查兼容性……';
     box.append(title,help,button,note,status);container.append(box);mounts.set(container,()=>box.remove());
     initialize().then(()=>{if(!disposed)status.textContent='已连接当前账号版 Roche，参考图增强已就绪。';}).catch(e=>status.textContent=e.message);
   }
-  function dispose(){if(disposed)return;disposed=true;clearInterval(lifecycleTimer);hook?.dispose();releaseFetch();ui?.dispose();observer?.disconnect();cancelAnimationFrame(frame);clearTimeout(noticeTimer);for(const b of inserted)b.remove();for(const clean of mounts.values())clean();historyWrite.finally(()=>db?.close());}
+  function dispose(){if(disposed)return;disposed=true;document.removeEventListener('click',noteAlbumGenerate,true);clearInterval(lifecycleTimer);hook?.dispose();releaseFetch();ui?.dispose();observer?.disconnect();cancelAnimationFrame(frame);clearTimeout(noticeTimer);for(const b of inserted)b.remove();for(const clean of mounts.values())clean();historyWrite.finally(()=>db?.close());}
   window.RochePlugin.register({id:ID,name:'锁脸多图参考',version:VERSION,apps:[{id:ID+'-settings',name:'锁脸多图参考',icon:'photo_library',mount,unmount:c=>{mounts.get(c)?.();mounts.delete(c);}}]});
   window.__rocheReferencePlugin={dispose,open};
+  document.addEventListener('click',noteAlbumGenerate,true);
   observer=new MutationObserver(()=>{if(!frame)frame=requestAnimationFrame(()=>{frame=0;scan();});});observer.observe(document.body,{childList:true,subtree:true});scan();
   initialize().catch(()=>{});
 })();
