@@ -1,6 +1,6 @@
-# Roche 记录清理 0.1.1
+# Roche 记录清理 0.1.2
 
-[安装地址](https://raw.githubusercontent.com/zhuzeyu0424/Groche-plugins/main/history-cleaner/plugin.json?v=0.1.1)
+[安装地址](https://raw.githubusercontent.com/zhuzeyu0424/Groche-plugins/main/history-cleaner/plugin.json?v=0.1.2)
 
 在 Roche「插件 App 管理」粘贴安装地址。首次安装后刷新 Roche。
 
@@ -11,7 +11,7 @@
 
 入口读取当前窗口的真实会话 ID，同名角色互不混用。插件桌面入口提供使用说明和「检查入口」。
 
-0.1.1 修复正式网页没有开发环境组件标记时两个按钮都不出现的问题。使用 Roche 当前生产 Vue 的真实组件树确认所属会话，不依赖角色名称或全局最近会话。
+0.1.2 修复线下归档包含数字编号时确认阶段误报「记录或保护状态已变化」的问题。删除前会用数据库里原样的编号重新核对所选记录。
 
 ## 使用
 

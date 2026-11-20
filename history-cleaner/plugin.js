@@ -1,13 +1,14 @@
-/* Roche 记录清理 0.1.1. User-confirmed scoped deletion; memories stay intact. */
+/* Roche 记录清理 0.1.2. User-confirmed scoped deletion; memories stay intact. */
 (() => {
 'use strict';
   const PROTECTED_TYPES = new Set(['system_memory','system','system_notice','hidden','system_memory_summary']);
   const cleanId = value => typeof value==='string'||typeof value==='number'?String(value).trim():'';
+  const validMessageKey = value => typeof value==='string'?value.trim().length>0:Number.isFinite(value);
   const rowBytes = rows => rows.reduce((n,row)=>n+new TextEncoder().encode(JSON.stringify(row)).length,0);
-  const protectedMessage = row => !row || !cleanId(row.id) || PROTECTED_TYPES.has(String(row.type||'').toLowerCase()) || row.isSystem===true || row.isFavorited===true || row.isFavorite===true || row.isPinned===true || row.pinned===true || row.isBookmarked===true;
+  const protectedMessage = row => !row || !validMessageKey(row.id) || PROTECTED_TYPES.has(String(row.type||'').toLowerCase()) || row.isSystem===true || row.isFavorited===true || row.isFavorite===true || row.isPinned===true || row.pinned===true || row.isBookmarked===true;
   const ordered = rows => [...rows].sort((a,b)=>(Number(a.timestamp)||0)-(Number(b.timestamp)||0)||cleanId(a.id).localeCompare(cleanId(b.id)));
   function uniqueRows(rows){
-    const map=new Map();for(const row of rows){const id=cleanId(row?.id);if(id&&!map.has(id))map.set(id,row);}return [...map.values()];
+    const map=new Map();for(const row of rows){const id=row?.id;if(validMessageKey(id)&&!map.has(id))map.set(id,row);}return [...map.values()];
   }
   function dayRange(from,to){
     const parse=value=>{
@@ -25,8 +26,8 @@
     const requestedKeep=Number(policy.keepRecent??500),requestedFloor=Number(policy.contextFloor??0);
     if(!Number.isInteger(requestedKeep)||requestedKeep<0||!Number.isInteger(requestedFloor)||requestedFloor<0)throw Error('保留条数无效');
     const floor=requestedFloor,keep=Math.max(floor,requestedKeep);
-    const recent=new Set(all.slice(Math.max(0,all.length-keep)).map(r=>cleanId(r.id)));
-    let candidates=all.filter(r=>!recent.has(cleanId(r.id))&&!protectedMessage(r)&&Number.isFinite(Number(r.timestamp))&&Number(r.timestamp)>0);
+    const recent=new Set(all.slice(Math.max(0,all.length-keep)).map(r=>r.id));
+    let candidates=all.filter(r=>!recent.has(r.id)&&!protectedMessage(r)&&Number.isFinite(Number(r.timestamp))&&Number(r.timestamp)>0);
     const boundary=Number(policy.boundary)||0;
     if(policy.summaryOnly!==false)candidates=candidates.filter(r=>boundary>0&&Number(r.timestamp)<=boundary);
     if(policy.kind==='dates'){
@@ -35,7 +36,7 @@
     }else if(policy.kind==='count'){
       const n=Number(policy.count);if(!Number.isInteger(n)||n<1||n>100000)throw Error('请填写 1 至 100000 的整数条数');candidates=candidates.slice(0,n);
     }else throw Error('请选择日期或条数');
-    return {mode:'online',conversationId:cid,rows:candidates,ids:candidates.map(r=>cleanId(r.id)),count:candidates.length,bytes:rowBytes(candidates),keepRecent:keep,protectedCount:all.filter(protectedMessage).length,summaryOnly:policy.summaryOnly!==false,boundary,reason:policy.summaryOnly!==false&&!boundary?'未找到本聊天的总结进度；可先完成总结，或在备份后取消“仅已总结”。':''};
+    return {mode:'online',conversationId:cid,rows:candidates,ids:candidates.map(r=>r.id),count:candidates.length,bytes:rowBytes(candidates),keepRecent:keep,protectedCount:all.filter(protectedMessage).length,summaryOnly:policy.summaryOnly!==false,boundary,reason:policy.summaryOnly!==false&&!boundary?'未找到本聊天的总结进度；可先完成总结，或在备份后取消“仅已总结”。':''};
   }
   function archiveSummaryIds(parentId, summaryMessages=[], facts=[]){
     const ids=new Set();
@@ -59,10 +60,10 @@
     const ids=new Set(eligible.map(s=>cleanId(s.id)));
     const chosen=ordered(uniqueRows(rows.filter(r=>ids.has(cleanId(r?.conversationId))&&!protectedMessage(r))));
     const items=eligible.map(s=>{const selected=chosen.filter(r=>cleanId(r.conversationId)===cleanId(s.id));return {sessionId:cleanId(s.id),timestamp:s.timestamp,count:selected.length,bytes:rowBytes(selected),hasSummary:summarized.has(cleanId(s.id))};});
-    return {mode:'offline',conversationId:cid,rows:chosen,ids:chosen.map(r=>cleanId(r.id)),items,count:chosen.length,bytes:rowBytes(chosen),summaryOnly:policy.summaryOnly!==false,skippedArchives:sessions.length-eligible.length,unsummarizedArchives:items.filter(s=>!s.hasSummary).length};
+    return {mode:'offline',conversationId:cid,rows:chosen,ids:chosen.map(r=>r.id),items,count:chosen.length,bytes:rowBytes(chosen),summaryOnly:policy.summaryOnly!==false,skippedArchives:sessions.length-eligible.length,unsummarizedArchives:items.filter(s=>!s.hasSummary).length};
   }
   async function fingerprintRows(rows){
-    const text=JSON.stringify([...rows].map(r=>[cleanId(r.id||r.conversationId),r]).sort((a,b)=>a[0].localeCompare(b[0])));
+    const text=JSON.stringify(rows.map(r=>[JSON.stringify(r.id??r.conversationId)??'',r]).sort((a,b)=>a[0]<b[0]?-1:a[0]>b[0]?1:0));
     return [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(b=>b.toString(16).padStart(2,'0')).join('');
   }
 
@@ -187,14 +188,18 @@ async function createHistoryHost() {
     const rows = state.messages?.[id] || [];
     return rows.some(row => row?.isStreaming === true || row?.isGenerating === true || row?.text === 'PENDING' || row?.content === 'PENDING');
   }
-  async function deleteMessageBatch(conversationId, ids) {
+  async function deleteMessageBatch(conversationId, ids, expectedRows) {
     const id = requireId(conversationId);
     if (!Array.isArray(ids) || !ids.length || ids.length > 200) throw Error('清理批次无效');
-    const wanted = ids.map(idOf);
-    if (wanted.some(value => !value) || new Set(wanted).size !== wanted.length) throw Error('清理记录无效');
+    // IndexedDB distinguishes numeric keys from strings containing those same digits.
+    const wanted = [...ids];
+    if (wanted.some(value => !validMessageKey(value)) || new Set(wanted).size !== wanted.length) throw Error('清理记录无效');
     if (await isBusy(id)) throw Error('Roche 正在生成或加载，请稍后重新预览');
     if (native.deleteMessages !== deleteMessages || await hash(Function.prototype.toString.call(deleteMessages)) !== auditHash) throw unsupported();
-    const wantedSet = new Set(wanted), found = await withDatabase(db => readonly(db, ['messages'], tx => {
+    // Native deletion updates the reactive cache as well as IndexedDB.
+    if (!Array.isArray(native.store.messages[id])) await native.loadMessages(id, {force:true});
+    if (!Array.isArray(native.store.messages[id])) throw Error('当前记录缓存未能加载；没有提交清理');
+    const found = await withDatabase(db => readonly(db, ['messages'], tx => {
       const store = tx.objectStore('messages');
       return Promise.all(wanted.map(messageId => new Promise((resolve, reject) => {
         const request = store.get(messageId);
@@ -202,12 +207,10 @@ async function createHistoryHost() {
         request.onerror = () => reject(request.error || Error('读取待清理记录失败'));
       })));
     }));
-    if (found.some(row => !row || idOf(row.conversationId) !== id || !wantedSet.has(idOf(row.id)) || protectedMessage(row))) throw Error('记录或保护状态已变化，请重新预览');
-    // Native deletion intentionally updates the reactive message cache as well as IndexedDB.
-    // It only runs for initialized caches. Native loading is read-only with respect to messages.
-    if (!Array.isArray(native.store.messages[id])) await native.loadMessages(id, {force:true});
-    if (!Array.isArray(native.store.messages[id])) throw Error('当前记录缓存未能加载；没有提交清理');
+    if (found.some((row, index) => !row || idOf(row.conversationId) !== id || row.id !== wanted[index] || protectedMessage(row) ||
+      (expectedRows && JSON.stringify(row) !== JSON.stringify(expectedRows[index])))) throw Error('记录或保护状态已变化，请重新预览');
     if (await isBusy(id)) throw Error('Roche 正在生成或加载，请稍后重新预览');
+    if (native.deleteMessages !== deleteMessages) throw unsupported();
     await deleteMessages.call(native, id, found.map(row => row.id));
   }
   return {
@@ -430,26 +433,25 @@ class CleanupSession {
     const memory=await this.host.readMemorySnapshot(this.cid);
     const batches=[];
     for(const cid of new Set(plan.rows.map(r=>cleanId(r.conversationId)))){
-      const ids=plan.rows.filter(r=>cleanId(r.conversationId)===cid).map(r=>cleanId(r.id));
-      for(let i=0;i<ids.length;i+=200)batches.push({cid,ids:ids.slice(i,i+200)});
+      const rows=plan.rows.filter(r=>cleanId(r.conversationId)===cid);
+      for(let i=0;i<rows.length;i+=200)batches.push({cid,rows:rows.slice(i,i+200)});
     }
     let completed=0,error=null;
     try{
       for(const batch of batches){
         if(this.stopRequested)break;
         this.assertCurrent();await this.assertIdle(plan);
-        const current=await this.host.readMessages(batch.cid,{all:true}),ids=new Set(batch.ids);
-        const actual=current.filter(r=>ids.has(cleanId(r.id))&&cleanId(r.conversationId)===batch.cid);
-        const expected=plan.rows.filter(r=>ids.has(cleanId(r.id))&&cleanId(r.conversationId)===batch.cid);
-        if(await fingerprintRows(actual)!==await fingerprintRows(expected))throw Error('当前批次记录已变化，请重新预览');
+        const current=await this.host.readMessages(batch.cid,{all:true}),ids=batch.rows.map(row=>row.id),wanted=new Set(ids);
+        const actual=current.filter(r=>wanted.has(r.id)&&cleanId(r.conversationId)===batch.cid);
+        if(await fingerprintRows(actual)!==await fingerprintRows(batch.rows))throw Error('当前批次记录已变化，请重新预览');
         if(this.mode==='online'){
           const conversation=await this.host.getConversation(this.cid);
           if(!conversation)throw Error('当前聊天已不存在');
           const eligible=planOnline(current,{...plan.policy,kind:'count',count:100000,conversationId:this.cid,contextFloor:this.floorFor(conversation),boundary:await this.host.readSummaryBoundary(this.cid)});
-          const allowed=new Set(eligible.ids);if(batch.ids.some(id=>!allowed.has(id)))throw Error('当前上下文或总结范围已变化，请重新预览');
+          const allowed=new Set(eligible.ids);if(ids.some(id=>!allowed.has(id)))throw Error('当前上下文或总结范围已变化，请重新预览');
         }
         if(this.stopRequested)break;
-        await this.host.deleteMessageBatch(batch.cid,batch.ids);completed+=batch.ids.length;
+        await this.host.deleteMessageBatch(batch.cid,ids,batch.rows);completed+=ids.length;
         onProgress({deleted:completed,total:plan.count});
         await new Promise(resolve=>setTimeout(resolve,0));
       }
@@ -459,7 +461,7 @@ class CleanupSession {
       const targetIds=new Set(plan.ids);
       for(const cid of new Set(plan.rows.map(r=>cleanId(r.conversationId)))){
         const rows=await this.host.readMessages(cid,{all:true});
-        remaining+=rows.filter(r=>cleanId(r.conversationId)===cid&&targetIds.has(cleanId(r.id))).length;
+        remaining+=rows.filter(r=>cleanId(r.conversationId)===cid&&targetIds.has(r.id)).length;
       }
       const memoryPreserved=await this.memoryUnchanged(memory),result={deleted:plan.count-remaining,remaining,stopped:this.stopRequested,memoryPreserved};
       this.plan=null;
@@ -590,7 +592,7 @@ class CleanerDialog {
 }
 
 function installHistoryCleaner(){
-  const ID='roche-history-cleaner',VERSION='0.1.1';
+  const ID='roche-history-cleaner',VERSION='0.1.2';
   if(!window.RochePlugin?.register)throw Error('请在 Roche 插件管理中安装');
   window.__rocheHistoryCleaner?.dispose?.();
   let view=null,disposed=false,opening=false;
