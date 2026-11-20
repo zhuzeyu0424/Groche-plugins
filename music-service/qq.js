@@ -11,7 +11,31 @@ function httpsMedia(value) {
     throw new QqFailure(422, 'QQ 音乐返回的音频地址不受支持');
   return u.href;
 }
-async function qq(route, body, token, env, invoke = handleRequest) {
+async function numericSongInfo(value, request) {
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id <= 0) throw new QqFailure(400, 'QQ 歌曲编号无效');
+  // The SDK route requires a MID. QQ's public catalog accepts old IDs as numbers.
+  const url = new URL('https://u.y.qq.com/cgi-bin/musicu.fcg');
+  url.search = new URLSearchParams({ format: 'json', data: JSON.stringify({
+    comm: { ct: 24, cv: 0 },
+    songinfo: { module: 'music.pf_song_detail_svr', method: 'get_song_detail_yqq', param: { song_type: 0, song_id: id } }
+  }) });
+  let data;
+  try {
+    const response = await request(url, {
+      headers: { Referer: 'https://y.qq.com/' }, redirect: 'error', signal: AbortSignal.timeout(7000)
+    });
+    if (!response.ok) throw Error('QQ song lookup failed');
+    data = (await response.json()).songinfo;
+  } catch {
+    throw new QqFailure(502, '暂时查不到旧卡片的歌曲详情，请稍后再试');
+  }
+  const song = data?.data?.track_info;
+  if (data?.code !== 0 || Number(song?.id) !== id || !ID.test(text(song?.mid, 32)))
+    throw new QqFailure(422, '这张旧歌曲卡片无法解析，请重新搜索这首歌');
+  return song;
+}
+async function qq(route, body, token, env, invoke = handleRequest, request = fetch) {
   if (!env.QQ_SESSION_SECRET || env.QQ_SESSION_SECRET.length < 32)
     throw new QqFailure(503, '请在 Vercel 添加 QQ_SESSION_SECRET（至少 32 位随机字符），然后重新部署音乐服务');
   async function call(path, args = {}, method = 'GET', useSession = true) {
@@ -27,7 +51,7 @@ async function qq(route, body, token, env, invoke = handleRequest) {
     if (!r.ok) {
       if (path === '/search' && d.errorKey === 'search.rejected')
         throw new QqFailure(502, 'QQ 曲库本次拒绝搜索' + (Number.isSafeInteger(d.upstreamCode) ? '（' + d.upstreamCode + '）' : '') + '，未发送卡片；可稍后手动重试');
-      const hints = { 401: 'QQ 登录已过期，请重新扫码', 429: 'QQ 请求过于频繁，请稍后再试', 501: '当前服务尚未配置 QQ 登录', 502: 'QQ 音乐暂时无法连接，请稍后再试' };
+      const hints = { 401: 'QQ 登录已过期，请重新扫码', 429: 'QQ 请求过于频繁，请稍后再试', 501: '当前音乐服务不支持这项 QQ 请求', 502: 'QQ 音乐暂时无法连接，请稍后再试' };
       throw new QqFailure(r.status, hints[r.status] || 'QQ 音乐请求未完成（' + r.status + '）');
     }
     return d;
@@ -83,18 +107,18 @@ async function qq(route, body, token, env, invoke = handleRequest) {
   }
   if (route === '/qq/detail') {
     const mid = text(body.mid, 32); if (!ID.test(mid)) throw new QqFailure(400, '这张歌曲卡片没有有效的 QQ 歌曲编号');
-    const d = await call('/getSongInfo/' + mid, {}, 'GET', false), s = d.response?.songinfo?.data?.track_info;
-    if (!s || text(s.mid, 32) !== mid) throw new QqFailure(422, 'QQ 未返回这张卡片对应的歌曲详情');
+    const numeric = /^\d+$/.test(mid);
+    const s = numeric ? await numericSongInfo(mid, request) :
+      (await call('/getSongInfo/' + mid, {}, 'GET', false)).response?.songinfo?.data?.track_info;
+    if (!s || (!numeric && text(s.mid, 32) !== mid)) throw new QqFailure(422, 'QQ 未返回这张卡片对应的歌曲详情');
     const album = text(s.album?.mid, 32);
-    return { code: 200, data: { qqMid: mid, qqMedia: text(s.file?.media_mid, 32),
+    return { code: 200, data: { qqMid: text(s.mid, 32), qqMedia: text(s.file?.media_mid, 32),
       artwork: ID.test(album) ? 'https://y.gtimg.cn/music/photo_new/T002R300x300M000' + album + '.jpg' : '' } };
   }
   if (route === '/qq/lyrics') {
     let mid = text(body.mid, 32); if (!ID.test(mid)) throw new QqFailure(400, '歌曲编号无效');
     if (/^\d+$/.test(mid)) {
-      const detail = await call('/getSongInfo', { songid: mid }, 'GET', false);
-      mid = text(detail.response?.songinfo?.data?.track_info?.mid, 32);
-      if (!ID.test(mid)) throw new QqFailure(422, '这张旧歌曲卡片无法读取歌词，请重新搜索这首歌');
+      mid = text((await numericSongInfo(mid, request)).mid, 32);
     }
     const d = await call('/getLyric', { songmid: mid }, 'GET', false);
     if (d.response?.code !== 0) throw new QqFailure(502, 'QQ 本次没有返回歌词，可稍后手动重试');
@@ -106,10 +130,8 @@ async function qq(route, body, token, env, invoke = handleRequest) {
     if (!ID.test(mid)) throw new QqFailure(400, '这张歌曲卡片没有有效的 QQ 歌曲编号');
     // Older cards use the numeric song ID. Resolve it to the correct song MID and media MID.
     if (/^\d+$/.test(mid)) {
-      const d = await call('/getSongInfo', { songid: mid });
-      const s = d.response?.songinfo?.data?.track_info;
-      mid = text(s?.mid, 32); media = text(s?.file?.media_mid, 32);
-      if (!ID.test(mid)) throw new QqFailure(422, '这张旧歌曲卡片无法解析，请重新搜索并分享');
+      const s = await numericSongInfo(mid, request);
+      mid = text(s.mid, 32); media = text(s.file?.media_mid, 32);
     }
     const d = await call('/getMusicPlay/' + mid, { quality: '128', ...(ID.test(media) ? { mediaId: media } : {}) });
     const entry = d.data?.playUrl?.[mid];

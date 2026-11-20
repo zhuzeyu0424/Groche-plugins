@@ -3,7 +3,7 @@ module.exports=async function(req,res){
 res.setHeader('Access-Control-Allow-Origin','*');res.setHeader('Access-Control-Allow-Methods','GET, POST, OPTIONS');res.setHeader('Access-Control-Allow-Headers','Content-Type, Authorization');res.setHeader('Cache-Control','no-store');
 if(req.method==='OPTIONS')return res.status(204).end();
 const route=new URL(req.url,'https://localhost').pathname;
-if(route==='/'&&req.method==='GET')return res.status(200).json({service:'Roche music',version:'0.4.0',configured:!!process.env.MUSIC_ACCESS_KEY,qqConfigured:(process.env.QQ_SESSION_SECRET||'').length>=32});
+if(route==='/'&&req.method==='GET')return res.status(200).json({service:'Roche music',version:'0.4.1',configured:!!process.env.MUSIC_ACCESS_KEY,qqConfigured:(process.env.QQ_SESSION_SECRET||'').length>=32});
 if(!process.env.MUSIC_ACCESS_KEY)return res.status(503).json({code:503});
 if(req.headers.authorization!=='Bearer '+process.env.MUSIC_ACCESS_KEY)return res.status(401).json({code:401});
 if(req.method!=='POST')return res.status(405).json({code:405});
