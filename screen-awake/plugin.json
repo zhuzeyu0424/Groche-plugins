@@ -1,0 +1,11 @@
+{
+  "id": "roche-screen-awake",
+  "name": "亮屏守护",
+  "version": "0.1.0",
+  "description": "在 Roche 留在屏幕上时请求系统保持亮屏，显示实际申请状态。",
+  "entry": "plugin.js?v=0.1.0",
+  "permissions": [
+    "ui"
+  ],
+  "hash": "60aa50fe9fa649343089a93ceb5e747d1e5106b69c816064962e0452b954fa59"
+}
