@@ -1,0 +1,8 @@
+{
+  "id": "roche-notification-pace",
+  "name": "通知节奏",
+  "version": "0.1.0",
+  "description": "Roche 页面顶部通知按消息长度逐条显示，沿用自定义提示音和原生横幅。",
+  "entry": "plugin.js?v=0.1.0",
+  "permissions": ["ui", "storage"]
+}
