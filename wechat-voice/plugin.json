@@ -1,0 +1,7 @@
+{
+  "id": "roche-wechat-voice-tools",
+  "name": "微信语音小工具",
+  "version": "0.1.0",
+  "entry": "roche-wechat-voice-tools.js?v=0.1.0",
+  "description": "为微信美化的收到语音增加转文字按钮和本机未查看提示。"
+}
