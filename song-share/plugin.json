@@ -1,9 +1,9 @@
 {
   "id": "roche-song-share",
   "name": "分享歌曲",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "唱片式播放器、三来源搜索、收藏、待播、角色分享历史和 AI 歌单。",
-  "entry": "releases/0.9.0/roche-song-share.js",
+  "entry": "releases/0.9.1/roche-song-share.js",
   "permissions": [
     "conversation:read",
     "memory:read",
