@@ -1,0 +1,11 @@
+{
+  "id": "roche-voice-duration",
+  "name": "语音时长校准",
+  "version": "0.1.0",
+  "description": "语音播放后显示实际音频时长。",
+  "permissions": [
+    "ui"
+  ],
+  "hash": "14c52451a561a80dd203cff13f6386e4162667941c4bc656a269791d2d719466",
+  "entry": "plugin.js?v=0.1.0"
+}
