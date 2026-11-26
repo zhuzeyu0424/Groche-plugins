@@ -1,9 +1,9 @@
 {
   "id": "roche-media-share",
   "name": "分享视频",
-  "version": "0.2.1",
-  "description": "分享短视频与视觉描述，按需播放并管理本机原片空间。",
-  "entry": "plugin.js?v=0.2.1",
+  "version": "0.2.2",
+  "description": "在私聊和群聊分享短视频，按原画面比例播放并管理本机原片。",
+  "entry": "releases/0.2.2/plugin.js",
   "permissions": [
     "conversation:read",
     "chat:write",
