@@ -1,0 +1,8 @@
+{
+  "id": "roche-avatar-recognition",
+  "name": "头像识别",
+  "version": "0.1.0",
+  "description": "在角色编辑页识别当前头像，保存后只将对应画面描述给角色。",
+  "entry": "releases/0.1.0/plugin.js",
+  "permissions": ["character:read", "conversation:read", "ai:chat", "storage", "ui", "network"]
+}
